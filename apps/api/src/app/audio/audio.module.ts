@@ -5,7 +5,7 @@ import * as path from 'path'
 @Module({
   imports: [
     ServeStaticModule.forRoot({
-      rootPath: path.resolve(__dirname, '../../../../../audio-cache'),
+      rootPath: path.resolve(process.cwd(), 'apps/api/audio-cache'),
       serveRoot: '/audio',
     }),
   ],
