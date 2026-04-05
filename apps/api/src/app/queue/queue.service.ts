@@ -14,7 +14,7 @@ function getFileId(sourceUrl: string): string {
 @Injectable()
 export class QueueService implements OnModuleInit {
   private readonly logger = new Logger(QueueService.name)
-  private metaCache = new Map<string, { title: string; duration: number }>()
+  private metaCache = new Map<string, { title: string; duration: number; originalUrl: string }>()
 
   onModuleInit() {
     if (!fs.existsSync(CACHE_DIR)) {
@@ -45,7 +45,7 @@ export class QueueService implements OnModuleInit {
     }
 
     const { title, duration } = await this.download(sourceUrl, fileId, onProgress)
-    this.metaCache.set(fileId, { title, duration })
+    this.metaCache.set(fileId, { title, duration, originalUrl: sourceUrl })
 
     return {
       id: crypto.randomUUID(),
