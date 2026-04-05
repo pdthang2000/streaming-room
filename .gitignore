@@ -1,0 +1,19 @@
+# Nx
+.nx/cache
+.nx/workspace-data
+
+# Dependencies
+node_modules
+
+# Build outputs
+dist
+.next
+out
+
+# Audio cache - never commit mp3 files
+apps/api/audio-cache/*.mp3
+
+# Misc
+.DS_Store
+*.local
+.env
