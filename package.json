@@ -3,7 +3,10 @@
   "version": "0.0.0",
   "license": "MIT",
   "private": true,
-  "scripts": {},
+  "scripts": {
+    "dev:api": "nx serve api --output-style=stream-without-prefixes",
+    "dev:web": "nx serve web --output-style=stream-without-prefixes"
+  },
   "devDependencies": {
     "@eslint/js": "^9.8.0",
     "@nestjs/schematics": "^11.0.0",
