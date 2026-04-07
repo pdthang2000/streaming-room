@@ -11,6 +11,9 @@ export function useRoom() {
   const socketRef = useRef<Socket | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const stallRetriesRef = useRef(0)
+  // Tracks the server-reported elapsed time and when we captured it, so we can
+  // re-seek accurately if autoplay is blocked and the user takes time to click.
+  const pendingSyncRef = useRef<{ elapsed: number; capturedAt: number } | null>(null)
   const [currentSong, setCurrentSong] = useState<QueueItem | null>(null)
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [downloadStatuses, setDownloadStatuses] = useState<DownloadStatus[]>([])
@@ -18,14 +21,27 @@ export function useRoom() {
 
   // If autoplay is blocked, resume on the next user interaction anywhere on the page
   const resumeOnInteraction = () => {
-    audioRef.current?.play().then(() => {
+    const audio = audioRef.current
+    if (!audio) return
+
+    // Re-seek to compensate for time elapsed while waiting for user interaction
+    if (pendingSyncRef.current) {
+      const { elapsed, capturedAt } = pendingSyncRef.current
+      audio.currentTime = elapsed + (Date.now() - capturedAt) / 1000
+      pendingSyncRef.current = null
+    }
+
+    audio.play().then(() => {
       document.removeEventListener('click', resumeOnInteraction)
       document.removeEventListener('keydown', resumeOnInteraction)
     }).catch(() => {})
   }
 
   const tryPlay = () => {
-    audioRef.current?.play().catch(() => {
+    audioRef.current?.play().then(() => {
+      // Autoplay succeeded — no deferred sync needed
+      pendingSyncRef.current = null
+    }).catch(() => {
       document.addEventListener('click', resumeOnInteraction)
       document.addEventListener('keydown', resumeOnInteraction)
     })
@@ -108,6 +124,7 @@ export function useRoom() {
         }
 
         audio.addEventListener('loadedmetadata', () => {
+          pendingSyncRef.current = { elapsed, capturedAt: Date.now() }
           audio.currentTime = elapsed
           tryPlay()
         }, { once: true })
