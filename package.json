@@ -4,8 +4,9 @@
   "license": "MIT",
   "private": true,
   "scripts": {
-    "dev:api": "nx serve api --output-style=stream-without-prefixes",
-    "dev:web": "nx serve web --output-style=stream-without-prefixes"
+    "dev": "nx run-many -t serve -p api web --output-style=stream",
+    "dev:api": "nx serve api --output-style=stream",
+    "dev:web": "nx serve web --output-style=stream"
   },
   "devDependencies": {
     "@eslint/js": "^9.8.0",

@@ -43,6 +43,7 @@ export class RoomService {
       this.state.currentSong = null
       this.state.startedAt = null
       this.logger.log('Queue empty — nothing to play')
+      this.eventEmitter.emit('room.songAdvanced', { ...this.state })
       return
     }
 
