@@ -14,11 +14,14 @@ import {
   RoomState,
   AddToQueuePayload,
 } from '@listenroom/shared'
+import { Logger } from '@nestjs/common'
 
 @WebSocketGateway({ cors: { origin: '*', methods: ['GET', 'POST'] } })
 export class RoomGateway {
   @WebSocketServer()
-  server: Server
+  server!: Server
+
+  private readonly logger = new Logger(RoomGateway.name)
 
   constructor(
     private readonly roomService: RoomService,
@@ -42,6 +45,8 @@ export class RoomGateway {
       progress: 0,
     })
 
+    this.logger.log(`Downloading: ${data.url}`)
+
     try {
       const item = await this.queueService.downloadAndEnqueue(
         data.url,
@@ -55,6 +60,8 @@ export class RoomGateway {
         },
       )
 
+      this.logger.log(`Queued: "${item.title}" (${item.duration}s)`)
+
       this.server.emit(EVENTS.DOWNLOAD_STATUS, {
         url: data.url,
         status: 'done',
@@ -64,10 +71,12 @@ export class RoomGateway {
       this.roomService.enqueue(item)
       this.server.emit(EVENTS.QUEUE_UPDATED, this.roomService.getRoomState())
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.logger.error(`Download failed for ${data.url}: ${message}`)
       client.emit(EVENTS.DOWNLOAD_STATUS, {
         url: data.url,
         status: 'error',
-        message: err instanceof Error ? err.message : String(err),
+        message,
       })
     }
   }

@@ -2,6 +2,9 @@ const { NxAppWebpackPlugin } = require('@nx/webpack/app-plugin');
 const { join } = require('path');
 
 module.exports = {
+  watchOptions: {
+    ignored: /audio-cache/,
+  },
   output: {
     path: join(__dirname, '../../dist/apps/api'),
     clean: true,

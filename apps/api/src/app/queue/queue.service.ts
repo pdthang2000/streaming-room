@@ -62,7 +62,9 @@ export class QueueService implements OnModuleInit {
     fileId: string,
     onProgress?: (progress: number) => void,
   ): Promise<{ title: string; duration: number }> {
-    const outputPath = path.join(CACHE_DIR, `${fileId}.%(ext)s`)
+    // Use a temp filename during download; yt-dlp will rename after conversion
+    const outputTemplate = path.join(CACHE_DIR, `${fileId}.%(ext)s`)
+    const finalMp3 = path.join(CACHE_DIR, `${fileId}.mp3`)
 
     return new Promise((resolve, reject) => {
       const args = [
@@ -70,7 +72,7 @@ export class QueueService implements OnModuleInit {
         '--extract-audio',
         '--audio-format', 'mp3',
         '--audio-quality', '0',
-        '--output', outputPath,
+        '--output', outputTemplate,
         '--print', 'after_move:%(title)s|||%(duration)s',
         '--no-playlist',
       ]
@@ -83,16 +85,18 @@ export class QueueService implements OnModuleInit {
       }
 
       let meta = ''
+      let stderrBuf = ''
 
-      proc.stdout.on('data', (data: Buffer) => {
+      proc.stdout?.on('data', (data: Buffer) => {
         const line = data.toString()
         const match = line.match(/(\d+\.?\d*)%/)
         if (match && onProgress) onProgress(parseFloat(match[1]))
         if (line.includes('|||')) meta = line.trim()
       })
 
-      proc.stderr.on('data', (data: Buffer) => {
+      proc.stderr?.on('data', (data: Buffer) => {
         const line = data.toString()
+        stderrBuf += line
         const match = line.match(/(\d+\.?\d*)%/)
         if (match && onProgress) onProgress(parseFloat(match[1]))
       })
@@ -106,7 +110,26 @@ export class QueueService implements OnModuleInit {
       })
 
       proc.on('close', (code) => {
-        if (code !== 0) return reject(new Error(`yt-dlp exited with code ${code}`))
+        if (code !== 0) {
+          // Clean up any partial/unconverted file left behind
+          for (const ext of ['webm', 'm4a', 'opus', 'ogg', 'part']) {
+            const leftover = path.join(CACHE_DIR, `${fileId}.${ext}`)
+            if (fs.existsSync(leftover)) fs.unlinkSync(leftover)
+          }
+          const reason = stderrBuf.trim().split('\n').pop() || `exit code ${code}`
+          return reject(new Error(`yt-dlp failed: ${reason}`))
+        }
+
+        // Guard: if the mp3 wasn't produced, ffmpeg likely wasn't available
+        if (!fs.existsSync(finalMp3)) {
+          // Clean up whatever was left
+          for (const ext of ['webm', 'm4a', 'opus', 'ogg']) {
+            const leftover = path.join(CACHE_DIR, `${fileId}.${ext}`)
+            if (fs.existsSync(leftover)) fs.unlinkSync(leftover)
+          }
+          return reject(new Error('yt-dlp finished but mp3 was not produced — is ffmpeg installed?'))
+        }
+
         const [rawTitle, rawDuration] = meta.split('|||')
         const title = rawTitle?.trim() || 'Unknown'
         let duration = parseInt(rawDuration?.trim() || '0', 10)
