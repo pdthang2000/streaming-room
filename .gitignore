@@ -13,6 +13,13 @@ out
 # Audio cache - never commit mp3 files
 apps/api/audio-cache/*.mp3
 
+# Dev state snapshot (queue/user data persisted across reloads)
+apps/api/.dev-state/
+
+# Test fixtures and ephemeral test state
+apps/api/test-cache/
+apps/api/test-state/
+
 # Misc
 .DS_Store
 *.local

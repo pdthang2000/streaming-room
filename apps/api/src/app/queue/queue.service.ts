@@ -5,7 +5,10 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { QueueItem } from '@listenroom/shared'
 
-const CACHE_DIR = path.resolve(process.cwd(), 'apps/api/audio-cache')
+const CACHE_DIR = process.env.AUDIO_CACHE_DIR ?? path.resolve(process.cwd(), 'apps/api/audio-cache')
+const META_CACHE_PATH = process.env.STATE_DIR
+  ? path.join(process.env.STATE_DIR, 'meta-cache.json')
+  : path.resolve(process.cwd(), 'apps/api/.dev-state/meta-cache.json')
 
 function getFileId(sourceUrl: string): string {
   return createHash('md5').update(sourceUrl).digest('hex').slice(0, 12)
@@ -20,6 +23,28 @@ export class QueueService implements OnModuleInit {
     if (!fs.existsSync(CACHE_DIR)) {
       fs.mkdirSync(CACHE_DIR, { recursive: true })
       this.logger.log(`Created audio cache dir: ${CACHE_DIR}`)
+    }
+    this.loadMetaCache()
+  }
+
+  private loadMetaCache(): void {
+    if (!fs.existsSync(META_CACHE_PATH)) return
+    try {
+      const data = JSON.parse(fs.readFileSync(META_CACHE_PATH, 'utf-8'))
+      this.metaCache = new Map(Object.entries(data))
+      this.logger.log(`Restored meta cache: ${this.metaCache.size} entries`)
+    } catch (err) {
+      this.logger.warn(`Could not load meta cache: ${err}`)
+    }
+  }
+
+  private saveMetaCache(): void {
+    try {
+      const dir = path.dirname(META_CACHE_PATH)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(META_CACHE_PATH, JSON.stringify(Object.fromEntries(this.metaCache), null, 2))
+    } catch (err) {
+      this.logger.warn(`Could not save meta cache: ${err}`)
     }
   }
 
@@ -46,6 +71,7 @@ export class QueueService implements OnModuleInit {
 
     const { title, duration } = await this.download(sourceUrl, fileId, onProgress)
     this.metaCache.set(fileId, { title, duration, originalUrl: sourceUrl })
+    this.saveMetaCache()
 
     return {
       id: crypto.randomUUID(),

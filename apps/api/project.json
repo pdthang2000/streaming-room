@@ -42,6 +42,13 @@
       "dependsOn": ["prune-lockfile", "copy-workspace-modules"],
       "executor": "nx:noop"
     },
+    "test": {
+      "executor": "@nx/jest:jest",
+      "options": {
+        "jestConfig": "apps/api/jest.config.js",
+        "forceExit": true
+      }
+    },
     "serve": {
       "continuous": true,
       "executor": "@nx/js:node",

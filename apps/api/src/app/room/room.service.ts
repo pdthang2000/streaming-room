@@ -1,11 +1,15 @@
-import { Injectable, Logger } from '@nestjs/common'
+import { Injectable, Logger, OnModuleInit, OnApplicationShutdown } from '@nestjs/common'
 import { EventEmitter2 } from '@nestjs/event-emitter'
 import { QueueItem, RoomState } from '@listenroom/shared'
+import * as fs from 'fs'
+import * as path from 'path'
 
 const FALLBACK_DURATION_SECONDS = 180
+const SNAPSHOT_DIR = process.env.STATE_DIR ?? path.resolve(process.cwd(), 'apps/api/.dev-state')
+const SNAPSHOT_PATH = path.join(SNAPSHOT_DIR, 'room-state.json')
 
 @Injectable()
-export class RoomService {
+export class RoomService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(RoomService.name)
 
   // Each user's personal song queue
@@ -20,8 +24,76 @@ export class RoomService {
   }
 
   private advanceTimer: NodeJS.Timeout | null = null
+  private saveTimer: NodeJS.Timeout | null = null
 
   constructor(private readonly eventEmitter: EventEmitter2) {}
+
+  onModuleInit(): void {
+    this.loadSnapshot()
+  }
+
+  onApplicationShutdown(): void {
+    this.flushSnapshot()
+  }
+
+  private loadSnapshot(): void {
+    if (!fs.existsSync(SNAPSHOT_PATH)) return
+    try {
+      const snap = JSON.parse(fs.readFileSync(SNAPSHOT_PATH, 'utf-8'))
+      this.userQueues = new Map(Object.entries(snap.userQueues ?? {})) as Map<string, QueueItem[]>
+      this.userOrder = snap.userOrder ?? []
+      this.state = {
+        currentSong: snap.state?.currentSong ?? null,
+        startedAt: snap.state?.startedAt ?? null,
+        queue: snap.state?.queue ?? [],
+      }
+      this.logger.log(
+        `Restored snapshot — playing: "${this.state.currentSong?.title ?? 'nothing'}", upcoming: ${this.state.queue.length} song(s)`,
+      )
+      if (this.state.currentSong && this.state.startedAt) {
+        const duration =
+          this.state.currentSong.duration > 0
+            ? this.state.currentSong.duration
+            : FALLBACK_DURATION_SECONDS
+        const elapsed = (Date.now() - this.state.startedAt) / 1000
+        const remaining = duration - elapsed
+        if (remaining <= 0) {
+          this.logger.log('Song already ended during restart — advancing immediately')
+          setImmediate(() => this.advanceSong())
+        } else {
+          this.logger.log(`Re-arming advance timer: ${remaining.toFixed(1)}s remaining`)
+          this.advanceTimer = setTimeout(() => this.advanceSong(), remaining * 1000)
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`Could not load snapshot (starting fresh): ${err}`)
+    }
+  }
+
+  private scheduleSnapshot(): void {
+    if (this.saveTimer) clearTimeout(this.saveTimer)
+    this.saveTimer = setTimeout(() => this.flushSnapshot(), 500)
+  }
+
+  private flushSnapshot(): void {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = null
+    }
+    try {
+      if (!fs.existsSync(SNAPSHOT_DIR)) fs.mkdirSync(SNAPSHOT_DIR, { recursive: true })
+      fs.writeFileSync(
+        SNAPSHOT_PATH,
+        JSON.stringify(
+          { userQueues: Object.fromEntries(this.userQueues), userOrder: this.userOrder, state: this.state },
+          null,
+          2,
+        ),
+      )
+    } catch (err) {
+      this.logger.warn(`Could not save snapshot: ${err}`)
+    }
+  }
 
   getRoomState(): RoomState & { elapsed: number | null } {
     const elapsed =
@@ -53,6 +125,8 @@ export class RoomService {
 
     if (!this.state.currentSong) {
       this.advanceSong()
+    } else {
+      this.scheduleSnapshot()
     }
   }
 
@@ -68,6 +142,7 @@ export class RoomService {
       this.state.queue = []
       this.logger.log('Queue empty — nothing to play')
       this.eventEmitter.emit('room.songAdvanced', { ...this.state })
+      this.scheduleSnapshot()
       return
     }
 
@@ -92,6 +167,7 @@ export class RoomService {
     this.logger.log(`[advance] AFTER  — now playing: "${next.title}" by ${username} | rotation: [${this.userOrder.join(', ')}] | queue: [${this.state.queue.map(q => q.addedBy).join(', ')}]`)
 
     this.eventEmitter.emit('room.songAdvanced', { ...this.state })
+    this.scheduleSnapshot()
 
     const duration = next.duration > 0 ? next.duration : FALLBACK_DURATION_SECONDS
     this.advanceTimer = setTimeout(() => {

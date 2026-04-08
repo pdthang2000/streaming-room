@@ -3,7 +3,7 @@ const { join } = require('path');
 
 module.exports = {
   watchOptions: {
-    ignored: /audio-cache/,
+    ignored: /audio-cache|\.dev-state|test-cache|test-state/,
   },
   output: {
     path: join(__dirname, '../../dist/apps/api'),
