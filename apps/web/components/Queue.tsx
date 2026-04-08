@@ -19,11 +19,8 @@ export function Queue({ queue }: Props) {
             <li key={item.id} className="flex items-start gap-3">
               <span className="text-zinc-600 text-sm w-4 shrink-0 pt-0.5">{i + 1}</span>
               <div className="overflow-hidden flex-1">
-                <span
-                  key={item.id}
-                  className="block text-zinc-300 text-sm whitespace-nowrap animate-[marquee_12s_linear_infinite]"
-                >
-                  {item.title}
+                <span className="block text-zinc-300 text-sm truncate">
+                  {item.addedBy}
                 </span>
               </div>
             </li>

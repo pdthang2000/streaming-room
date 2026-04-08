@@ -13,6 +13,7 @@ import {
   EVENTS,
   RoomState,
   AddToQueuePayload,
+  JoinRoomPayload,
 } from '@listenroom/shared'
 import { Logger } from '@nestjs/common'
 
@@ -29,7 +30,11 @@ export class RoomGateway {
   ) {}
 
   @SubscribeMessage(EVENTS.JOIN_ROOM)
-  handleJoin(@ConnectedSocket() client: Socket) {
+  handleJoin(
+    @MessageBody() data: JoinRoomPayload,
+    @ConnectedSocket() client: Socket,
+  ) {
+    this.logger.log(`${data?.username ?? 'unknown'} joined (${client.id})`)
     const state = this.roomService.getRoomState()
     client.emit(EVENTS.ROOM_STATE, state)
   }
@@ -48,9 +53,10 @@ export class RoomGateway {
     this.logger.log(`Downloading: ${data.url}`)
 
     try {
+      const addedBy = data.username?.trim() || 'anonymous'
       const item = await this.queueService.downloadAndEnqueue(
         data.url,
-        client.id,
+        addedBy,
         (progress) => {
           this.server.emit(EVENTS.DOWNLOAD_STATUS, {
             url: data.url,

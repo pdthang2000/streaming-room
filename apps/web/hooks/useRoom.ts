@@ -2,15 +2,17 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { io, Socket } from 'socket.io-client'
-import type { QueueItem, DownloadStatus, RoomStatePayload, RoomState } from '@listenroom/shared'
+import type { QueueItem, DownloadStatus, RoomStatePayload, RoomState, JoinRoomPayload } from '@listenroom/shared'
 import { EVENTS } from '@listenroom/shared'
 
 const MAX_STALL_RETRIES = 3
 
-export function useRoom() {
+export function useRoom(username: string | null) {
   const socketRef = useRef<Socket | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const stallRetriesRef = useRef(0)
+  // Always holds the latest username so connect handlers (closed over stale values) can read it
+  const usernameRef = useRef(username)
   // Tracks the server-reported elapsed time and when we captured it, so we can
   // re-seek accurately if autoplay is blocked and the user takes time to click.
   const pendingSyncRef = useRef<{ elapsed: number; capturedAt: number } | null>(null)
@@ -99,7 +101,9 @@ export function useRoom() {
     socket.on('connect', () => {
       console.log('[socket] connected:', socket.id)
       setConnected(true)
-      socket.emit(EVENTS.JOIN_ROOM)
+      if (usernameRef.current) {
+        socket.emit(EVENTS.JOIN_ROOM, { username: usernameRef.current } satisfies JoinRoomPayload)
+      }
     })
 
     socket.on('disconnect', (reason: string) => {
@@ -183,8 +187,18 @@ export function useRoom() {
     }
   }, [])
 
+  // Keep ref in sync and emit JOIN_ROOM if the socket is already connected
+  // when username becomes available (covers returning users and first-time users)
+  useEffect(() => {
+    usernameRef.current = username
+    const socket = socketRef.current
+    if (username && socket?.connected) {
+      socket.emit(EVENTS.JOIN_ROOM, { username } satisfies JoinRoomPayload)
+    }
+  }, [username])
+
   const addToQueue = (url: string) => {
-    socketRef.current?.emit(EVENTS.ADD_TO_QUEUE, { url })
+    socketRef.current?.emit(EVENTS.ADD_TO_QUEUE, { url, username: username ?? 'anonymous' })
   }
 
   const skipSong = () => {

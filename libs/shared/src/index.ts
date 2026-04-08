@@ -6,7 +6,7 @@ export interface QueueItem {
   duration: number     // seconds (integer)
   fileId: string       // MD5 hash prefix of sourceUrl — used in /audio/:fileId.mp3
   sourceUrl: string    // original URL or ytsearch1:... query
-  addedBy: string      // socket.id of the user who added it
+  addedBy: string      // display name of the user who added it
 }
 
 export interface RoomState {
@@ -50,8 +50,13 @@ export const EVENTS = {
 
 // ─── Socket Payload Types ─────────────────────────────────────────────────────
 
+export interface JoinRoomPayload {
+  username: string
+}
+
 export interface AddToQueuePayload {
   url: string
+  username: string
 }
 
 export type RoomStatePayload = RoomStateWithElapsed

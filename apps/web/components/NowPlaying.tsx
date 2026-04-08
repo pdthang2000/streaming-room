@@ -35,6 +35,7 @@ export function NowPlaying({ currentSong, onSkip }: Props) {
             >
               {currentSong.title}
             </p>
+            <p className="text-xs text-zinc-500 mt-1">added by {currentSong.addedBy}</p>
           </div>
         </div>
       ) : (
