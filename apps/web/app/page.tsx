@@ -27,7 +27,7 @@ export default function RoomPage() {
     setUsername(null)
   }
 
-  const { currentSong, queue, downloadStatuses, audioRef, addToQueue, skipSong, connected } = useRoom(username)
+  const { currentSong, queue, downloadStatuses, audioRef, addToQueue, skipSong, connected, currentTime } = useRoom(username)
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -59,7 +59,7 @@ export default function RoomPage() {
 
           {/* Left — player + search */}
           <div className="space-y-4">
-            <NowPlaying currentSong={currentSong} onSkip={skipSong} />
+            <NowPlaying currentSong={currentSong} onSkip={skipSong} currentTime={currentTime} />
             <SearchBox downloadStatuses={downloadStatuses} onAdd={addToQueue} />
           </div>
 

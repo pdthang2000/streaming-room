@@ -20,6 +20,7 @@ export function useRoom(username: string | null) {
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [downloadStatuses, setDownloadStatuses] = useState<DownloadStatus[]>([])
   const [connected, setConnected] = useState(false)
+  const [currentTime, setCurrentTime] = useState(0)
 
   // If autoplay is blocked, resume on the next user interaction anywhere on the page
   const resumeOnInteraction = () => {
@@ -81,6 +82,10 @@ export function useRoom(username: string | null) {
       audio.load()
     }
 
+    const handleTimeUpdate = () => {
+      setCurrentTime(audioRef.current?.currentTime ?? 0)
+    }
+
     const audio = audioRef.current
     if (audio) {
       audio.addEventListener('stalled', recoverAudio)
@@ -88,6 +93,7 @@ export function useRoom(username: string | null) {
         console.error('[audio] error code:', audio.error?.code, audio.error?.message)
         recoverAudio()
       })
+      audio.addEventListener('timeupdate', handleTimeUpdate)
       // Reset retry counter whenever playback is progressing normally
       audio.addEventListener('playing', () => {
         if (stallRetriesRef.current > 0) {
@@ -140,14 +146,24 @@ export function useRoom(username: string | null) {
 
     socket.on(EVENTS.SONG_STARTED, (state: RoomState) => {
       console.log('[socket] song_started — song:', state.currentSong?.title ?? 'none')
+      console.log('[debug] song_started — currentSong:', state.currentSong, '| audioRef.current:', audioRef.current)
       setCurrentSong(state.currentSong)
       setQueue(state.queue)
 
       if (state.currentSong && audioRef.current) {
         stallRetriesRef.current = 0
+        setCurrentTime(0)
         audioRef.current.src = audioUrl(state.currentSong.fileId)
         audioRef.current.currentTime = 0
         tryPlay()
+      } else if (!state.currentSong && audioRef.current) {
+        // Queue is now empty — stop playback explicitly. Without this the audio
+        // element keeps playing the previous song even though the UI has cleared.
+        console.log('[audio] queue empty — stopping playback')
+        audioRef.current.pause()
+        audioRef.current.src = ''
+      } else {
+        console.log('[debug] song_started — fell through both branches')
       }
     })
 
@@ -180,6 +196,7 @@ export function useRoom(username: string | null) {
       if (audio) {
         audio.removeEventListener('stalled', recoverAudio)
         audio.removeEventListener('error', recoverAudio)
+        audio.removeEventListener('timeupdate', handleTimeUpdate)
       }
       document.removeEventListener('click', resumeOnInteraction)
       document.removeEventListener('keydown', resumeOnInteraction)
@@ -205,5 +222,5 @@ export function useRoom(username: string | null) {
     socketRef.current?.emit(EVENTS.SKIP_SONG)
   }
 
-  return { currentSong, queue, downloadStatuses, audioRef, addToQueue, skipSong, connected }
+  return { currentSong, queue, downloadStatuses, audioRef, addToQueue, skipSong, connected, currentTime }
 }
