@@ -6,23 +6,23 @@ import { EVENTS, type QueueItem, type DownloadStatus, type RoomState, type RoomS
 export function useRoomState(username: string | null) {
   const [currentSong, setCurrentSong] = useState<QueueItem | null>(null)
   const [queue, setQueue] = useState<QueueItem[]>([])
+  const [userQueues, setUserQueues] = useState<Record<string, QueueItem[]>>({})
   const [downloadStatuses, setDownloadStatuses] = useState<DownloadStatus[]>([])
 
   useEffect(() => {
     const socket = getSocket()
 
-    const onRoomState = (state: RoomStatePayload) => {
+    const applyState = (state: RoomState) => {
       setCurrentSong(state.currentSong)
       setQueue(state.queue)
+      setUserQueues(state.userQueues ?? {})
     }
-    const onSongStarted = (state: RoomState) => {
-      setCurrentSong(state.currentSong)
-      setQueue(state.queue)
-    }
+
+    const onRoomState = (state: RoomStatePayload) => applyState(state)
+    const onSongStarted = (state: RoomState) => applyState(state)
     const onQueueUpdated = (state: RoomState) => {
       console.log('[socket] queue_updated — queue length:', state.queue.length)
-      setCurrentSong(state.currentSong)
-      setQueue(state.queue)
+      applyState(state)
     }
     const onDownloadStatus = (status: DownloadStatus) => {
       console.log(`[socket] download_status — ${status.status}${status.progress != null ? ` ${status.progress.toFixed(0)}%` : ''}`, status.url)
@@ -53,6 +53,22 @@ export function useRoomState(username: string | null) {
     getSocket().emit(EVENTS.ADD_TO_QUEUE, { url, username: username ?? 'anonymous' })
   }
   const skipSong = () => getSocket().emit(EVENTS.SKIP_SONG)
+  const removeFromQueue = (songId: string) =>
+    getSocket().emit(EVENTS.REMOVE_FROM_QUEUE, { songId, username: username ?? 'anonymous' })
+  const moveToTop = (songId: string) =>
+    getSocket().emit(EVENTS.MOVE_TO_TOP, { songId, username: username ?? 'anonymous' })
+  const moveToBottom = (songId: string) =>
+    getSocket().emit(EVENTS.MOVE_TO_BOTTOM, { songId, username: username ?? 'anonymous' })
 
-  return { currentSong, queue, downloadStatuses, addToQueue, skipSong }
+  return {
+    currentSong,
+    queue,
+    userQueues,
+    downloadStatuses,
+    addToQueue,
+    skipSong,
+    removeFromQueue,
+    moveToTop,
+    moveToBottom,
+  }
 }

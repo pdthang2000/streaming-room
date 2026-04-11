@@ -14,6 +14,7 @@ import {
   RoomState,
   AddToQueuePayload,
   JoinRoomPayload,
+  QueueMutationPayload,
 } from '@listenroom/shared'
 import { Logger } from '@nestjs/common'
 
@@ -90,6 +91,24 @@ export class RoomGateway {
   @SubscribeMessage(EVENTS.SKIP_SONG)
   handleSkip() {
     this.roomService.advanceSong()
+  }
+
+  @SubscribeMessage(EVENTS.REMOVE_FROM_QUEUE)
+  handleRemove(@MessageBody() data: QueueMutationPayload) {
+    const ok = this.roomService.removeFromQueue(data.username, data.songId)
+    if (ok) this.server.emit(EVENTS.QUEUE_UPDATED, this.roomService.getRoomState())
+  }
+
+  @SubscribeMessage(EVENTS.MOVE_TO_TOP)
+  handleMoveTop(@MessageBody() data: QueueMutationPayload) {
+    const ok = this.roomService.moveToTop(data.username, data.songId)
+    if (ok) this.server.emit(EVENTS.QUEUE_UPDATED, this.roomService.getRoomState())
+  }
+
+  @SubscribeMessage(EVENTS.MOVE_TO_BOTTOM)
+  handleMoveBottom(@MessageBody() data: QueueMutationPayload) {
+    const ok = this.roomService.moveToBottom(data.username, data.songId)
+    if (ok) this.server.emit(EVENTS.QUEUE_UPDATED, this.roomService.getRoomState())
   }
 
   @OnEvent('room.songAdvanced')

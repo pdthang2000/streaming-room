@@ -21,6 +21,7 @@ export class RoomService implements OnModuleInit, OnApplicationShutdown {
     currentSong: null,
     startedAt: null,
     queue: [],
+    userQueues: {},
   }
 
   private advanceTimer: NodeJS.Timeout | null = null
@@ -46,7 +47,9 @@ export class RoomService implements OnModuleInit, OnApplicationShutdown {
         currentSong: snap.state?.currentSong ?? null,
         startedAt: snap.state?.startedAt ?? null,
         queue: snap.state?.queue ?? [],
+        userQueues: {},
       }
+      this.rebuildPublicState()
       this.logger.log(
         `Restored snapshot — playing: "${this.state.currentSong?.title ?? 'nothing'}", upcoming: ${this.state.queue.length} song(s)`,
       )
@@ -95,6 +98,13 @@ export class RoomService implements OnModuleInit, OnApplicationShutdown {
     }
   }
 
+  private rebuildPublicState(): void {
+    this.state.queue = this.userOrder.map(u => this.userQueues.get(u)![0])
+    this.state.userQueues = Object.fromEntries(
+      Array.from(this.userQueues.entries()).map(([u, items]) => [u, [...items]]),
+    )
+  }
+
   getRoomState(): RoomState & { elapsed: number | null } {
     const elapsed =
       this.state.startedAt !== null
@@ -118,8 +128,8 @@ export class RoomService implements OnModuleInit, OnApplicationShutdown {
       this.userOrder.push(username)
     }
 
-    // One slot per user in the displayed queue
-    this.state.queue = this.userOrder.map(u => this.userQueues.get(u)![0])
+    // One slot per user in the displayed queue + full per-user backlog
+    this.rebuildPublicState()
 
     this.logger.log(`[enqueue] AFTER  — rotation: [${this.userOrder.join(', ')}] | queue: [${this.state.queue.map(q => q.addedBy).join(', ')}] | ${username} personal: ${this.userQueues.get(username)!.length} song(s)`)
 
@@ -139,7 +149,7 @@ export class RoomService implements OnModuleInit, OnApplicationShutdown {
     if (this.userOrder.length === 0) {
       this.state.currentSong = null
       this.state.startedAt = null
-      this.state.queue = []
+      this.rebuildPublicState()
       this.logger.log('Queue empty — nothing to play')
       this.eventEmitter.emit('room.songAdvanced', { ...this.state })
       this.scheduleSnapshot()
@@ -162,7 +172,7 @@ export class RoomService implements OnModuleInit, OnApplicationShutdown {
 
     this.state.currentSong = next
     this.state.startedAt = Date.now()
-    this.state.queue = this.userOrder.map(u => this.userQueues.get(u)![0])
+    this.rebuildPublicState()
 
     this.logger.log(`[advance] AFTER  — now playing: "${next.title}" by ${username} | rotation: [${this.userOrder.join(', ')}] | queue: [${this.state.queue.map(q => q.addedBy).join(', ')}]`)
 
@@ -173,5 +183,52 @@ export class RoomService implements OnModuleInit, OnApplicationShutdown {
     this.advanceTimer = setTimeout(() => {
       this.advanceSong()
     }, duration * 1000)
+  }
+
+  removeFromQueue(username: string, songId: string): boolean {
+    const userQueue = this.userQueues.get(username)
+    if (!userQueue) return false
+    const idx = userQueue.findIndex(s => s.id === songId)
+    if (idx === -1) return false
+
+    userQueue.splice(idx, 1)
+    if (userQueue.length === 0) {
+      this.userQueues.delete(username)
+      this.userOrder = this.userOrder.filter(u => u !== username)
+    }
+    this.rebuildPublicState()
+    this.logger.log(`[remove] ${username} removed song ${songId} — personal: ${userQueue.length} song(s)`)
+    this.scheduleSnapshot()
+    return true
+  }
+
+  moveToTop(username: string, songId: string): boolean {
+    const userQueue = this.userQueues.get(username)
+    if (!userQueue) return false
+    const idx = userQueue.findIndex(s => s.id === songId)
+    if (idx === -1) return false
+    if (idx === 0) return true
+
+    const [song] = userQueue.splice(idx, 1)
+    userQueue.unshift(song)
+    this.rebuildPublicState()
+    this.logger.log(`[moveTop] ${username} moved song ${songId} to top`)
+    this.scheduleSnapshot()
+    return true
+  }
+
+  moveToBottom(username: string, songId: string): boolean {
+    const userQueue = this.userQueues.get(username)
+    if (!userQueue) return false
+    const idx = userQueue.findIndex(s => s.id === songId)
+    if (idx === -1) return false
+    if (idx === userQueue.length - 1) return true
+
+    const [song] = userQueue.splice(idx, 1)
+    userQueue.push(song)
+    this.rebuildPublicState()
+    this.logger.log(`[moveBottom] ${username} moved song ${songId} to bottom`)
+    this.scheduleSnapshot()
+    return true
   }
 }

@@ -12,7 +12,8 @@ export interface QueueItem {
 export interface RoomState {
   currentSong: QueueItem | null
   startedAt: number | null      // Date.now() timestamp, or null if nothing playing
-  queue: QueueItem[]            // upcoming songs, ordered
+  queue: QueueItem[]            // upcoming songs, ordered (one per user in rotation)
+  userQueues: Record<string, QueueItem[]>  // full per-user backlog, keyed by username
 }
 
 // RoomState extended with server-calculated elapsed — sent on joinRoom only
@@ -40,6 +41,9 @@ export const EVENTS = {
   JOIN_ROOM: 'joinRoom',
   ADD_TO_QUEUE: 'addToQueue',
   SKIP_SONG: 'skipSong',
+  REMOVE_FROM_QUEUE: 'removeFromQueue',
+  MOVE_TO_TOP: 'moveToTop',
+  MOVE_TO_BOTTOM: 'moveToBottom',
 
   // Server → Client
   ROOM_STATE: 'roomState',           // sent only to the joining client
@@ -56,6 +60,11 @@ export interface JoinRoomPayload {
 
 export interface AddToQueuePayload {
   url: string
+  username: string
+}
+
+export interface QueueMutationPayload {
+  songId: string
   username: string
 }
 

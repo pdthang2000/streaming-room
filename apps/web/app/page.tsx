@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRoom } from '../hooks/useRoom'
 import { NowPlaying } from '../components/NowPlaying'
 import { Queue } from '../components/Queue'
+import { PersonalQueue } from '../components/PersonalQueue'
 import { SearchBox } from '../components/SearchBox'
 import { UsernameModal } from '../components/UsernameModal'
 
@@ -27,13 +28,28 @@ export default function RoomPage() {
     setUsername(null)
   }
 
-  const { currentSong, queue, downloadStatuses, audioRef, addToQueue, skipSong, connected, currentTime } = useRoom(username)
+  const {
+    currentSong,
+    queue,
+    userQueues,
+    downloadStatuses,
+    audioRef,
+    addToQueue,
+    skipSong,
+    removeFromQueue,
+    moveToTop,
+    moveToBottom,
+    connected,
+    currentTime,
+  } = useRoom(username)
+
+  const mySongs = username ? userQueues[username] ?? [] : []
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100">
       {username === null && <UsernameModal onConfirm={handleUsernameConfirm} />}
 
-      <div className="max-w-5xl mx-auto px-6 py-12">
+      <div className="max-w-7xl mx-auto px-6 py-12">
 
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
@@ -54,16 +70,24 @@ export default function RoomPage() {
           </div>
         </div>
 
-        {/* Two-column layout */}
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_320px] gap-4">
+        {/* Three-column layout: my queue | player + search | room queue */}
+        <div className="grid grid-cols-1 md:grid-cols-[320px_1fr_320px] gap-4">
 
-          {/* Left — player + search */}
+          {/* Left — personal queue */}
+          <PersonalQueue
+            songs={mySongs}
+            onRemove={removeFromQueue}
+            onMoveTop={moveToTop}
+            onMoveBottom={moveToBottom}
+          />
+
+          {/* Center — player + search */}
           <div className="space-y-4">
             <NowPlaying currentSong={currentSong} onSkip={skipSong} currentTime={currentTime} />
             <SearchBox downloadStatuses={downloadStatuses} onAdd={addToQueue} />
           </div>
 
-          {/* Right — queue */}
+          {/* Right — rotation queue */}
           <Queue queue={queue} />
         </div>
 
