@@ -12,19 +12,22 @@ interface Props {
   currentSong: QueueItem | null
   onSkip: () => void
   currentTime: number
+  username: string | null
 }
 
-export function NowPlaying({ currentSong, onSkip, currentTime }: Props) {
+export function NowPlaying({ currentSong, onSkip, currentTime, username }: Props) {
   return (
     <div className="bg-zinc-900 rounded-2xl p-6">
       <div className="flex items-center justify-between mb-3">
         <p className="text-xs uppercase tracking-widest text-zinc-500">Now Playing</p>
-        <button
-          onClick={onSkip}
-          className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors px-2 py-1 rounded-lg hover:bg-zinc-800"
-        >
-          Skip →
-        </button>
+        {currentSong && username === currentSong.addedBy && (
+          <button
+            onClick={onSkip}
+            className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors px-2 py-1 rounded-lg hover:bg-zinc-800"
+          >
+            Skip →
+          </button>
+        )}
       </div>
 
       {currentSong ? (

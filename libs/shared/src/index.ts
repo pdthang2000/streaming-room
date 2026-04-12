@@ -68,6 +68,10 @@ export interface QueueMutationPayload {
   username: string
 }
 
+export interface SkipSongPayload {
+  username: string
+}
+
 export type RoomStatePayload = RoomStateWithElapsed
 
 export type SongStartedPayload = RoomState

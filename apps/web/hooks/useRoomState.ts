@@ -52,7 +52,7 @@ export function useRoomState(username: string | null) {
   const addToQueue = (url: string) => {
     getSocket().emit(EVENTS.ADD_TO_QUEUE, { url, username: username ?? 'anonymous' })
   }
-  const skipSong = () => getSocket().emit(EVENTS.SKIP_SONG)
+  const skipSong = () => getSocket().emit(EVENTS.SKIP_SONG, { username: username ?? 'anonymous' })
   const removeFromQueue = (songId: string) =>
     getSocket().emit(EVENTS.REMOVE_FROM_QUEUE, { songId, username: username ?? 'anonymous' })
   const moveToTop = (songId: string) =>

@@ -159,7 +159,7 @@ describe('RoomGateway — socket integration', () => {
     expect(state.elapsed).toBeGreaterThan(0)
   })
 
-  it('skipSong → songStarted fires with next song', async () => {
+  it('skipSong — owner skips their song → songStarted fires with next song', async () => {
     mockDownload
       .mockResolvedValueOnce({ ...SONG_A, addedBy: 'alice' })
       .mockResolvedValueOnce({ ...SONG_B, addedBy: 'bob' })
@@ -174,11 +174,56 @@ describe('RoomGateway — socket integration', () => {
     await waitFor(alice, EVENTS.QUEUE_UPDATED)
 
     const next = await new Promise<any>(resolve => {
-      alice.emit(EVENTS.SKIP_SONG, {})
+      alice.emit(EVENTS.SKIP_SONG, { username: 'alice' })
       alice.once(EVENTS.SONG_STARTED, resolve)
     })
 
     expect(next.currentSong?.addedBy).toBe('bob')
+  })
+
+  it('skipSong — non-owner skip is ignored', async () => {
+    mockDownload.mockResolvedValueOnce({ ...SONG_A, addedBy: 'alice' })
+
+    const alice = await getClient('alice')
+    const bob = await getClient('bob')
+    alice.emit(EVENTS.JOIN_ROOM, { username: 'alice' })
+    bob.emit(EVENTS.JOIN_ROOM, { username: 'bob' })
+    await Promise.all([waitFor(alice, EVENTS.ROOM_STATE), waitFor(bob, EVENTS.ROOM_STATE)])
+
+    alice.emit(EVENTS.ADD_TO_QUEUE, { url: SONG_A.sourceUrl, username: 'alice' })
+    await waitFor(alice, EVENTS.QUEUE_UPDATED)
+
+    // Bob tries to skip alice's song
+    const skipped = await new Promise<boolean>(resolve => {
+      let fired = false
+      alice.once(EVENTS.SONG_STARTED, () => { fired = true })
+      bob.emit(EVENTS.SKIP_SONG, { username: 'bob' })
+      setTimeout(() => resolve(fired), 300)
+    })
+
+    expect(skipped).toBe(false)
+    expect(alice.connected).toBe(true)
+  })
+
+  it('skipSong — wrong username for current song is ignored', async () => {
+    mockDownload.mockResolvedValueOnce({ ...SONG_A, addedBy: 'alice' })
+
+    const alice = await getClient('alice')
+    alice.emit(EVENTS.JOIN_ROOM, { username: 'alice' })
+    await waitFor(alice, EVENTS.ROOM_STATE)
+
+    alice.emit(EVENTS.ADD_TO_QUEUE, { url: SONG_A.sourceUrl, username: 'alice' })
+    await waitFor(alice, EVENTS.QUEUE_UPDATED)
+
+    // Alice sends the wrong username in the payload
+    const skipped = await new Promise<boolean>(resolve => {
+      let fired = false
+      alice.once(EVENTS.SONG_STARTED, () => { fired = true })
+      alice.emit(EVENTS.SKIP_SONG, { username: 'notAlice' })
+      setTimeout(() => resolve(fired), 300)
+    })
+
+    expect(skipped).toBe(false)
   })
 
   it('download error → only the requesting client receives error status', async () => {

@@ -77,7 +77,7 @@ export default function RoomPage() {
           <div className="flex flex-col gap-4 flex-[3] min-w-0">
 
             {/* Now Playing */}
-            <NowPlaying currentSong={currentSong} onSkip={skipSong} currentTime={currentTime} />
+            <NowPlaying currentSong={currentSong} onSkip={skipSong} currentTime={currentTime} username={username} />
 
             {/* Add / Search */}
             <SearchBox downloadStatuses={downloadStatuses} onAdd={addToQueue} />

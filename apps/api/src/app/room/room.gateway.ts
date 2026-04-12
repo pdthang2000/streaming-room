@@ -15,6 +15,7 @@ import {
   AddToQueuePayload,
   JoinRoomPayload,
   QueueMutationPayload,
+  SkipSongPayload,
 } from '@listenroom/shared'
 import { Logger } from '@nestjs/common'
 
@@ -89,7 +90,9 @@ export class RoomGateway {
   }
 
   @SubscribeMessage(EVENTS.SKIP_SONG)
-  handleSkip() {
+  handleSkip(@MessageBody() data: SkipSongPayload) {
+    const current = this.roomService.getRoomState().currentSong
+    if (!current || current.addedBy !== data.username) return
     this.roomService.advanceSong()
   }
 
