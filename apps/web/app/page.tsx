@@ -49,10 +49,10 @@ export default function RoomPage() {
     <main className="min-h-screen bg-zinc-950 text-zinc-100">
       {username === null && <UsernameModal onConfirm={handleUsernameConfirm} />}
 
-      <div className="max-w-7xl mx-auto px-6 py-12">
+      <div className="max-w-7xl mx-auto px-6 py-8 flex flex-col h-screen">
 
         {/* Header */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center justify-between mb-6 shrink-0">
           <h1 className="text-xl font-semibold tracking-tight text-zinc-100">ListenRoom</h1>
           <div className="flex items-center gap-3">
             {username && (
@@ -70,25 +70,42 @@ export default function RoomPage() {
           </div>
         </div>
 
-        {/* Three-column layout: my queue | player + search | room queue */}
-        <div className="grid grid-cols-1 md:grid-cols-[320px_1fr_320px] gap-4">
+        {/* Main layout: left content + right chat */}
+        <div className="flex gap-4 flex-1 min-h-0">
 
-          {/* Left — personal queue */}
-          <PersonalQueue
-            songs={mySongs}
-            onRemove={removeFromQueue}
-            onMoveTop={moveToTop}
-            onMoveBottom={moveToBottom}
-          />
+          {/* Left column */}
+          <div className="flex flex-col gap-4 flex-[3] min-w-0">
 
-          {/* Center — player + search */}
-          <div className="space-y-4">
+            {/* Now Playing */}
             <NowPlaying currentSong={currentSong} onSkip={skipSong} currentTime={currentTime} />
+
+            {/* Add / Search */}
             <SearchBox downloadStatuses={downloadStatuses} onAdd={addToQueue} />
+
+            {/* Bottom row: My queue + People's queue */}
+            <div className="flex gap-4 flex-1 min-h-0">
+              <div className="flex-1 min-w-0 overflow-hidden">
+                <PersonalQueue
+                  songs={mySongs}
+                  onRemove={removeFromQueue}
+                  onMoveTop={moveToTop}
+                  onMoveBottom={moveToBottom}
+                />
+              </div>
+              <div className="flex-[1.4] min-w-0 overflow-hidden">
+                <Queue queue={queue} />
+              </div>
+            </div>
           </div>
 
-          {/* Right — rotation queue */}
-          <Queue queue={queue} />
+          {/* Right column — chat placeholder */}
+          <div className="flex-[1.4] bg-zinc-900 rounded-2xl p-6 flex flex-col min-w-0">
+            <p className="text-xs uppercase tracking-widest text-zinc-500 mb-4">Chat</p>
+            <div className="flex-1 flex items-center justify-center">
+              <p className="text-zinc-600 italic text-sm text-center">Chat coming soon</p>
+            </div>
+          </div>
+
         </div>
 
         <audio ref={audioRef} style={{ display: 'none' }} />
