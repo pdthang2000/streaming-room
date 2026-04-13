@@ -5,6 +5,7 @@ services:
       - '4000:4000'
     volumes:
       - audio-cache:/app/audio-cache
+      - ./cookies.txt:/app/cookies.txt:ro
     dns:
       - 8.8.8.8
       - 8.8.4.4

@@ -120,6 +120,11 @@ export class QueueService implements OnModuleInit {
         '--no-playlist',
       ]
 
+      const cookiesPath = '/app/cookies.txt'
+      if (require('fs').existsSync(cookiesPath)) {
+        args.push('--cookies', cookiesPath)
+      }
+
       let proc: ReturnType<typeof spawn>
       try {
         proc = spawn('yt-dlp', args)
