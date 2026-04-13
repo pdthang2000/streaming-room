@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ─── Builder ──────────────────────────────────────────────────────────────────
 FROM node:20-slim AS builder
 
@@ -5,9 +6,16 @@ RUN npm install -g pnpm
 
 WORKDIR /app
 
-COPY . .
+# Copy only workspace manifests first so the install layer is cached
+# unless the lockfile or package.json files change
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY libs/shared/package.json libs/shared/
 
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
+
+# Copy source after install — a source-only change only invalidates the build step
+COPY . .
 
 RUN pnpm nx build api
 
@@ -15,9 +23,12 @@ RUN pnpm nx build api
 FROM node:20-slim
 
 # Install ffmpeg (for yt-dlp post-processing) and yt-dlp via pip
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg python3 python3-pip \
+# Cache mounts speed up repeated builds without bloating the image layer
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    --mount=type=cache,id=pip,target=/root/.cache/pip \
+    apt-get update && apt-get install -y --no-install-recommends ffmpeg python3 python3-pip \
     && pip3 install --break-system-packages yt-dlp \
-    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

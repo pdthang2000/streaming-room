@@ -9,20 +9,28 @@ fi
 
 echo "Building and pushing as $DOCKERHUB_USER..."
 
-docker build \
+# --cache-from pulls layer metadata from the last push so source-only rebuilds
+# skip the pnpm install, apt-get, and pip steps entirely.
+# --cache-to type=inline embeds cache metadata in the image for next time.
+# --push combines build+push in one step (required for inline cache to work).
+
+docker buildx build \
   --platform linux/amd64 \
-  -f apps/api/Dockerfile \
+  --cache-from "type=registry,ref=$DOCKERHUB_USER/listenroom-api:latest" \
+  --cache-to "type=inline" \
   -t "$DOCKERHUB_USER/listenroom-api:latest" \
+  -f apps/api/Dockerfile \
+  --push \
   .
 
-docker build \
+docker buildx build \
   --platform linux/amd64 \
-  -f apps/web/Dockerfile \
+  --cache-from "type=registry,ref=$DOCKERHUB_USER/listenroom-web:latest" \
+  --cache-to "type=inline" \
   -t "$DOCKERHUB_USER/listenroom-web:latest" \
+  -f apps/web/Dockerfile \
+  --push \
   .
-
-docker push "$DOCKERHUB_USER/listenroom-api:latest"
-docker push "$DOCKERHUB_USER/listenroom-web:latest"
 
 echo ""
 echo "Done. On EC2 run:"

@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ─── Builder ──────────────────────────────────────────────────────────────────
 FROM node:20-slim AS builder
 
@@ -5,9 +6,16 @@ RUN npm install -g pnpm
 
 WORKDIR /app
 
-COPY . .
+# Copy only workspace manifests first so the install layer is cached
+# unless the lockfile or package.json files change
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY libs/shared/package.json libs/shared/
 
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
+
+# Copy source after install — a source-only change only invalidates the build step
+COPY . .
 
 RUN pnpm nx build web
 
