@@ -1,0 +1,24 @@
+services:
+  api:
+    image: ${DOCKERHUB_USER}/listenroom-api:latest
+    ports:
+      - '4000:4000'
+    volumes:
+      - audio-cache:/app/audio-cache
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    restart: unless-stopped
+
+  web:
+    image: ${DOCKERHUB_USER}/listenroom-web:latest
+    ports:
+      - '3000:3000'
+    environment:
+      API_URL: http://api:4000
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  audio-cache:
