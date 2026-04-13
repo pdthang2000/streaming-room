@@ -48,6 +48,23 @@ export class QueueService implements OnModuleInit {
     }
   }
 
+  scheduleCleanup(fileId: string, isStillNeeded: () => boolean): void {
+    setTimeout(() => {
+      if (isStillNeeded()) return
+      const mp3Path = path.join(CACHE_DIR, `${fileId}.mp3`)
+      if (fs.existsSync(mp3Path)) {
+        try {
+          fs.unlinkSync(mp3Path)
+          this.logger.log(`Deleted cached MP3: ${fileId}.mp3`)
+        } catch (err) {
+          this.logger.warn(`Could not delete ${fileId}.mp3: ${err}`)
+        }
+      }
+      this.metaCache.delete(fileId)
+      this.saveMetaCache()
+    }, 30_000)
+  }
+
   async downloadAndEnqueue(
     sourceUrl: string,
     addedBy: string,

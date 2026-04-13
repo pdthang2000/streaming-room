@@ -3,6 +3,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter'
 import { QueueItem, RoomState } from '@listenroom/shared'
 import * as fs from 'fs'
 import * as path from 'path'
+import { QueueService } from '../queue/queue.service'
 
 const FALLBACK_DURATION_SECONDS = 180
 const SNAPSHOT_DIR = process.env.STATE_DIR ?? path.resolve(process.cwd(), 'apps/api/.dev-state')
@@ -27,7 +28,10 @@ export class RoomService implements OnModuleInit, OnApplicationShutdown {
   private advanceTimer: NodeJS.Timeout | null = null
   private saveTimer: NodeJS.Timeout | null = null
 
-  constructor(private readonly eventEmitter: EventEmitter2) {}
+  constructor(
+    private readonly eventEmitter: EventEmitter2,
+    private readonly queueService: QueueService,
+  ) {}
 
   onModuleInit(): void {
     this.loadSnapshot()
@@ -158,6 +162,8 @@ export class RoomService implements OnModuleInit, OnApplicationShutdown {
 
     this.logger.log(`[advance] BEFORE — rotation: [${this.userOrder.join(', ')}] | queue: [${this.state.queue.map(q => q.addedBy).join(', ')}]`)
 
+    const prevSong = this.state.currentSong
+
     // Take the next user in rotation
     const username = this.userOrder.shift()!
     const userQueue = this.userQueues.get(username)!
@@ -175,6 +181,13 @@ export class RoomService implements OnModuleInit, OnApplicationShutdown {
     this.rebuildPublicState()
 
     this.logger.log(`[advance] AFTER  — now playing: "${next.title}" by ${username} | rotation: [${this.userOrder.join(', ')}] | queue: [${this.state.queue.map(q => q.addedBy).join(', ')}]`)
+
+    if (prevSong) {
+      const fileId = prevSong.fileId
+      this.queueService.scheduleCleanup(fileId, () =>
+        [...this.userQueues.values()].flat().some(item => item.fileId === fileId),
+      )
+    }
 
     this.eventEmitter.emit('room.songAdvanced', { ...this.state })
     this.scheduleSnapshot()
