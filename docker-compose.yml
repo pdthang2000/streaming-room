@@ -1,0 +1,29 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    ports:
+      - '4000:4000'
+    volumes:
+      - audio-cache:/app/audio-cache
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - '3000:3000'
+    environment:
+      # Used by Next.js server-side rewrites to reach the API container
+      API_URL: http://api:4000
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  audio-cache:

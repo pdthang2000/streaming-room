@@ -1,0 +1,8 @@
+node_modules
+dist
+.next
+apps/api/audio-cache
+apps/api/test-cache
+*.tsbuildinfo
+.git
+tmp
