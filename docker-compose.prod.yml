@@ -1,15 +1,12 @@
 services:
   api:
     image: ${DOCKERHUB_USER}/listenroom-api:latest
-    ports:
-      - '4000:4000'
+    network_mode: host
     volumes:
       - audio-cache:/app/audio-cache
       - ./cookies.txt:/app/cookies.txt
     environment:
-      YTDLP_PROXY: socks5://host.docker.internal:40000
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      YTDLP_PROXY: socks5://127.0.0.1:40000
     dns:
       - 8.8.8.8
       - 8.8.4.4
@@ -20,7 +17,7 @@ services:
     ports:
       - '3000:3000'
     environment:
-      API_URL: http://api:4000
+      API_URL: http://localhost:4000
     depends_on:
       - api
     restart: unless-stopped
