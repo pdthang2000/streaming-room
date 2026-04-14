@@ -1,0 +1,18 @@
+:80 {
+    log {
+        output stdout
+        format console
+    }
+    handle /socket.io* {
+        reverse_proxy api:4000
+    }
+    handle /api/* {
+        reverse_proxy api:4000
+    }
+    handle /audio/* {
+        reverse_proxy api:4000
+    }
+    handle {
+        reverse_proxy web:3000
+    }
+}

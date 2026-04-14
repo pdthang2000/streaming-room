@@ -3,8 +3,6 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
-    ports:
-      - '4000:4000'
     volumes:
       - audio-cache:/app/audio-cache
     dns:
@@ -16,13 +14,35 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
-    ports:
-      - '3000:3000'
     environment:
       # Used by Next.js server-side rewrites to reach the API container
       API_URL: http://api:4000
     depends_on:
       - api
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    mem_limit: 64m
+    ports:
+      - '80:80'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - api
+      - web
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    mem_limit: 64m
+    # Quick tunnel — no domain or token needed, gives a random trycloudflare.com URL
+    # To use a custom domain instead, replace with:
+    #   command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
+    # and set CF_TUNNEL_TOKEN in your .env
+    command: tunnel --no-autoupdate --url http://caddy:80
+    depends_on:
+      - caddy
     restart: unless-stopped
 
 volumes:

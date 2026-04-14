@@ -12,7 +12,8 @@ export function useAudioPlayer() {
   const [currentTime, setCurrentTime] = useState(0)
 
   useEffect(() => {
-    const backendUrl = `http://${window.location.hostname}:4000`
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    const backendUrl = isLocal ? 'http://localhost:4000' : ''
     const audioUrl = (fileId: string) => `${backendUrl}/audio/${fileId}.mp3`
     const socket = getSocket()
     const audio = audioRef.current

@@ -4,6 +4,7 @@ import * as path from 'path'
 import { Test, TestingModule } from '@nestjs/testing'
 import { EventEmitterModule } from '@nestjs/event-emitter'
 import { RoomService } from './room.service'
+import { QueueService } from '../queue/queue.service'
 import { SONG_A, SONG_B, SONG_C, makeSong } from '../../test/fixtures/songs'
 
 const STATE_DIR = process.env.STATE_DIR!
@@ -11,7 +12,10 @@ const STATE_DIR = process.env.STATE_DIR!
 async function buildModule(): Promise<TestingModule> {
   return Test.createTestingModule({
     imports: [EventEmitterModule.forRoot()],
-    providers: [RoomService],
+    providers: [
+      RoomService,
+      { provide: QueueService, useValue: { scheduleCleanup: jest.fn() } },
+    ],
   }).compile()
 }
 
