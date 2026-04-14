@@ -120,18 +120,9 @@ export class QueueService implements OnModuleInit {
         '--no-playlist',
       ]
 
-      // Use node as the JS runtime for YouTube stream decryption
-      args.push('--js-runtimes', 'node')
-
       const cookiesPath = '/app/cookies.txt'
       if (require('fs').existsSync(cookiesPath)) {
         args.push('--cookies', cookiesPath)
-      }
-
-      // Route through WARP proxy if configured (avoids datacenter IP blocks)
-      const proxy = process.env.YTDLP_PROXY
-      if (proxy) {
-        args.push('--proxy', proxy)
       }
 
       let proc: ReturnType<typeof spawn>
