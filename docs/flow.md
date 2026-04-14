@@ -1,381 +1,380 @@
 # ListenRoom — Application Flow Document
 
-**Version:** 1.0.0  
-**Type:** Business Analysis / System Flow  
-**Audience:** Developers, contributors, and anyone seeking to understand how ListenRoom works end-to-end
+**Reflects:** actual codebase as of 2026-04-14
+**Audience:** developers working on the app
 
 ---
 
 ## 1. Overview
 
-ListenRoom is a single-room, synchronized music listening web app. There is no login, no database, and no playback controls. Music flows like a radio — anyone in the room hears the same song at the same point in time.
+ListenRoom is a single-room synchronized music listening app. There is no database, no login, and no playback controls. Music flows like a radio. The queue is fair — it rotates between users (round-robin) so no one person monopolizes the playlist.
 
-All real-time communication is handled via **Socket.io** between the Next.js frontend (port 3000) and the NestJS backend (port 4000). Audio files are served from the backend as static MP3s over HTTP Range requests.
+All real-time communication goes through **Socket.io** between the Next.js frontend and the NestJS backend. Audio is served from the backend as MP3 files over HTTP range requests. The backend persists its state to a snapshot file so the queue survives restarts.
+
+```
+Browser (Next.js on :3000)
+    │
+    ├── WebSocket (Socket.io) ──────────────── NestJS on :4000
+    ├── GET /audio/:fileId.mp3 ─────────────► NestJS AudioController
+    └── GET /api/room (debug) ──────────────► NestJS RoomController
+
+In production, Caddy on :80 proxies everything:
+    /socket.io*  →  api:4000
+    /audio/*     →  api:4000
+    /api/*       →  api:4000
+    /*           →  web:3000
+```
 
 ---
 
-## 2. System Components
+## 2. Socket Event Contract
 
-| Component | Technology | Responsibility |
-|-----------|------------|----------------|
-| `apps/web` | Next.js 14 (App Router) | UI, socket client, audio element |
-| `apps/api` | NestJS | Room state, socket gateway, yt-dlp orchestration |
-| `libs/shared` | TypeScript | Shared types and EVENTS constants |
-| `audio-cache/` | Filesystem | Downloaded MP3 files, served at `/audio/:fileId.mp3` |
-| `yt-dlp` | System binary | Fetches and converts audio from YouTube / URLs |
-
----
-
-## 3. Socket Event Contract
-
-All event names are defined in `libs/shared/src/index.ts` under the `EVENTS` constant. They are never hardcoded as strings in application code.
+All event names come from `EVENTS` in `libs/shared/src/index.ts`. Never use raw strings.
 
 ### Client → Server
 
 | Event | Payload | When |
-|-------|---------|------|
-| `joinRoom` | _(none)_ | Immediately after socket connects |
-| `addToQueue` | `{ url: string }` | User submits a song |
-| `skipSong` | _(none)_ | User clicks Skip |
+|---|---|---|
+| `joinRoom` | `{ username: string }` | Immediately after socket connects (or when username becomes available) |
+| `addToQueue` | `{ url: string, username: string }` | User submits a song |
+| `skipSong` | `{ username: string }` | User skips the current song (only works if they added it) |
+| `removeFromQueue` | `{ songId: string, username: string }` | User removes one of their queued songs |
+| `moveToTop` | `{ songId: string, username: string }` | Move one of their songs to the front of their personal queue |
+| `moveToBottom` | `{ songId: string, username: string }` | Move one of their songs to the back of their personal queue |
 
 ### Server → Client
 
 | Event | Payload | Scope |
-|-------|---------|-------|
+|---|---|---|
 | `roomState` | `RoomStateWithElapsed` | Joining client only |
 | `songStarted` | `RoomState` | All connected clients |
 | `queueUpdated` | `RoomState` | All connected clients |
-| `downloadStatus` | `DownloadStatus` | All clients (errors: submitter only) |
+| `downloadStatus` | `DownloadStatus` | All clients (errors only to submitter) |
 
 ---
 
-## 4. User Flows
+## 3. User Flows
 
 ---
 
-### 4.1 User Opens the App (Initial Connection)
+### 3.1 First Open — Username Modal
 
-**Trigger:** User navigates to the ListenRoom URL in their browser.
-
-**Actor:** Any visitor
-
-#### Step-by-step
+**Trigger:** User navigates to the app URL.
 
 ```
-[Browser]                          [NestJS Backend]
-    |                                      |
-    |  Page loads, useRoom() mounts        |
-    |  socket = io("http://host:4000")     |
-    |------- TCP connect ----------------->|
-    |                                      |
-    |  socket.on('connect')                |
-    |  emit("joinRoom")  ----------------->|
-    |                                      |  RoomService.getRoomState()
-    |                                      |  computes elapsed = (Date.now() - startedAt) / 1000
-    |<------ emit("roomState") ------------|  to this client only
-    |                                      |
+Browser loads page.tsx
+    │
+    ├── useEffect checks localStorage["listenroom_username"]
+    │       └── if missing → show UsernameModal (blocks UI)
+    │
+    │   User types name → clicks Join
+    │       └── localStorage.setItem("listenroom_username", name)
+    │       └── setUsername(name)
+    │
+    └── useSocket(username) runs
+            └── joinRoom is emitted with { username }
+                └── server sends back roomState
+```
+
+The username is stored in localStorage. On return visits the modal is skipped. The user can click their name in the header to change it (clears localStorage, shows modal again).
+
+---
+
+### 3.2 Joining the Room (Initial Sync)
+
+**Trigger:** Socket connects and `joinRoom` is emitted.
+
+The frontend has two `useEffect`s to handle race conditions:
+
+1. **If socket connects before username is set** — nothing is emitted until username arrives.
+2. **If username is set before socket connects** — `joinRoom` is emitted inside the `connect` handler.
+3. **If both are ready at mount time** — emits immediately via the already-connected check.
+
+```
+[Browser]                                    [NestJS]
+    |                                            |
+    | socket.emit("joinRoom", { username }) ---->|
+    |                                            | RoomService.getRoomState()
+    |                                            | computes elapsed = (Date.now() - startedAt) / 1000
+    |<--- socket.emit("roomState", state) -------|  (to this client only)
+    |                                            |
 ```
 
 **Frontend response to `roomState`:**
 
-- Sets `currentSong` and `queue` in React state
-- If a song is currently playing:
+- Sets `currentSong`, `queue`, `userQueues` in React state.
+- If a song is playing:
   - Sets `audio.src = /audio/{fileId}.mp3`
-  - Sets `audio.currentTime = elapsed` (server-calculated, in seconds)
-  - Calls `audio.play()`
-  - If the browser blocks autoplay: registers a one-time `click` or `keydown` listener to resume playback on the next user interaction
-- If nothing is playing: renders "Nothing playing yet"
+  - Waits for `loadedmetadata`, then seeks to `elapsed` and calls `.play()`
+  - Records `pendingSyncRef = { elapsed, capturedAt: Date.now() }` so if autoplay is blocked, the seek offset adjusts for time that passed while waiting for the user to interact
 
-**Result:** The user is immediately in sync with everyone else in the room.
-
----
-
-### 4.2 User Adds a Song (URL or Search Query)
-
-**Trigger:** User types a YouTube URL or a search term into the SearchBox and clicks "Add".
-
-**Actor:** Any connected user
-
-#### Step-by-step
-
-```
-[SearchBox Component]              [useRoom Hook]             [NestJS Backend]
-    |                                    |                           |
-    | User types "lofi hip hop"          |                           |
-    | Clicks Add                         |                           |
-    |                                    |                           |
-    | if starts with "http" → use as-is  |                           |
-    | else → prefix "ytsearch1:"         |                           |
-    |                                    |                           |
-    | onAdd("ytsearch1:lofi hip hop") -->|                           |
-    |                                    | emit("addToQueue", {url}) |
-    |                                    |-------------------------->|
-    |                                    |                           |
-    |                                    |                           | broadcast downloadStatus
-    |                                    |                           | { status: 'downloading', progress: 0 }
-    |<-----------------------------------|<--------------------------|  → all clients
-    |                                    |                           |
-    | [pulsing violet dot shown]         |                           | spawn yt-dlp child process
-    |                                    |                           |
-    |                                    |                           | as yt-dlp runs:
-    |                                    |                           | broadcast downloadStatus
-    |<-----------------------------------|<--------------------------| { status: 'downloading', progress: 42.3 }
-    |                                    |                           |
-    | [progress updates in UI]           |                           |
-    |                                    |                           |
-    |                                    |                           | yt-dlp exits 0
-    |                                    |                           | MP3 saved to audio-cache/
-    |                                    |                           | QueueItem created
-    |                                    |                           |
-    |                                    |                           | broadcast downloadStatus
-    |<-----------------------------------|<--------------------------| { status: 'done', item }
-    |                                    |                           |
-    | [green dot, "Added" for 3s]        |                           | RoomService.enqueue(item)
-    |                                    |                           |
-    |                                    |                           | if nothing was playing:
-    |                                    |                           |   RoomService.advanceSong()
-    |                                    |                           |   → emits internal "room.songAdvanced"
-    |                                    |                           |   → RoomGateway broadcasts "songStarted"
-    |                                    |                           |
-    |                                    |                           | broadcast queueUpdated { currentSong, queue }
-    |<-----------------------------------|<--------------------------|  → all clients
-    |                                    |                           |
-    | [Queue list updates in UI]         |                           |
-```
-
-**Cache hit behavior:**  
-If `audio-cache/{fileId}.mp3` already exists on disk AND metadata is in the in-memory `metaCache`, yt-dlp is skipped entirely. The song is enqueued instantly.
-
-**Error behavior:**  
-If yt-dlp fails (private video, geo-block, binary not found, non-zero exit), `downloadStatus { status: 'error', message }` is emitted **only to the submitting client**. All other clients are unaffected.
+**Autoplay block handling:**
+If `.play()` is rejected, event listeners are attached to `document` for `click` and `keydown`. On the first interaction, the audio seeks to the corrected position (`elapsed + timePassedSinceCapture`) and plays.
 
 ---
 
-### 4.3 Song Auto-Advances (End of Song)
+### 3.3 Adding a Song
 
-**Trigger:** The current song's duration timer expires on the server.
-
-**Actor:** System (no user action)
-
-#### Step-by-step
+**Trigger:** User types a URL or search term into SearchBox and hits Add.
 
 ```
-[NestJS Backend — RoomService]               [All Connected Clients]
-    |                                                  |
-    | setTimeout fires after duration seconds          |
-    | advanceSong()                                    |
-    |                                                  |
-    | if queue is empty:                               |
-    |   currentSong = null, startedAt = null           |
-    |   emit internal "room.songAdvanced"              |
-    |   → RoomGateway broadcasts "songStarted"         |
-    |   → clients render "Nothing playing yet"         |
-    |                                                  |
-    | if queue has items:                              |
-    |   pop next from queue                            |
-    |   currentSong = next, startedAt = Date.now()    |
-    |   emit internal "room.songAdvanced"              |
-    |                                                  |
-    | RoomGateway.handleSongAdvanced:                  |
-    | broadcast "songStarted" { currentSong, queue } ->|
-    |                                                  |
-    |                               setCurrentSong()   |
-    |                               setQueue()         |
-    |                               audio.src = /audio/{fileId}.mp3
-    |                               audio.currentTime = 0
-    |                               audio.play()       |
-    |                                                  |
-    | schedule next advanceSong(duration * 1000)       |
+[SearchBox]         [useRoomState]              [NestJS]
+    |                     |                         |
+    | User submits         |                         |
+    | if starts "http" → use as-is                  |
+    | else → "ytsearch1:{query}"                    |
+    |                     |                         |
+    | onAdd(url) -------->|                         |
+    |                     | emit("addToQueue",       |
+    |                     |  { url, username }) ---->|
+    |                     |                         |
+    |                     |         broadcast downloadStatus { status: 'downloading', progress: 0 }
+    |<--------------------------------------------- | → all clients
+    |                     |                         |
+    | [pulsing violet dot]|                         | spawn yt-dlp child process
+    |                     |                         |
+    |                     |         broadcast downloadStatus { status: 'downloading', progress: 42.3 }
+    |<--------------------------------------------- | → all clients
+    |                     |                         |
+    |                     |                         | yt-dlp exits 0
+    |                     |                         | QueueItem created, MP3 on disk
+    |                     |                         | meta cache saved
+    |                     |                         |
+    |                     |         broadcast downloadStatus { status: 'done', item }
+    |<--------------------------------------------- | → all clients
+    |                     |                         |
+    |                     |                         | RoomService.enqueue(item)
+    |                     |                         |   → adds to user's personal queue
+    |                     |                         |   → adds user to round-robin if not present
+    |                     |                         |   → if nothing playing → advanceSong()
+    |                     |                         |
+    |                     |         broadcast queueUpdated { currentSong, queue, userQueues }
+    |<--------------------------------------------- | → all clients
 ```
 
-**Result:** All clients seamlessly transition to the next song at the same moment, without any coordination between browsers.
+**Cache hit:** If `audio-cache/{fileId}.mp3` exists on disk AND the fileId is in `metaCache`, yt-dlp is skipped entirely. The `QueueItem` is returned instantly.
+
+**Error:** yt-dlp failure emits `downloadStatus { status: 'error', message }` only to the submitting client. All other clients are unaffected.
 
 ---
 
-### 4.4 User Skips the Current Song
+### 3.4 Round-Robin Queue Mechanics
 
-**Trigger:** User clicks the "Skip →" button in the NowPlaying component.
+The queue is not a simple FIFO. Each user has a **personal queue** (their own backlog), and the room's playback queue is one slot per user, taken in rotation order.
 
-**Actor:** Any connected user
+**Data structures on the server:**
+- `userQueues: Map<string, QueueItem[]>` — full personal backlog, keyed by username
+- `userOrder: string[]` — rotation order (order users first added a song)
 
-#### Step-by-step
+**How `enqueue(item)` works:**
+1. Append item to `userQueues[username]`
+2. Add `username` to `userOrder` if not already present
+3. `rebuildPublicState()`: `queue` = the first item from each user in rotation order
+
+**How `advanceSong()` works:**
+1. Shift the first `username` from `userOrder`
+2. Shift their first song from `userQueues[username]`
+3. Set that song as `currentSong`, record `startedAt = Date.now()`
+4. If the user still has more songs, push them back to the end of `userOrder`
+5. If the user has no more songs, delete them from `userQueues`
+6. Rebuild public state, emit `room.songAdvanced` event → gateway broadcasts `songStarted`
+7. Schedule `setTimeout(advanceSong, duration * 1000)`
+
+**Example rotation:**
 
 ```
-[NowPlaying Component]         [useRoom Hook]             [NestJS Backend]
-    |                               |                            |
-    | User clicks "Skip →"          |                            |
-    | onSkip() callback ----------->|                            |
-    |                               | emit("skipSong") --------->|
-    |                               |                            |
-    |                               |                 RoomService.advanceSong()
-    |                               |                 (same path as auto-advance)
-    |                               |                            |
-    |                               |                 broadcast "songStarted"
-    |<------------------------------|<---------------------------|  → all clients
-    |                               |                            |
-    | [NowPlaying updates]          |                            |
-    | [Queue updates]               |                            |
-    | [audio jumps to next song]    |                            |
-```
+alice adds: Song A1, Song A2
+bob adds:   Song B1
+charlie adds: Song C1
 
-**Note:** Skip is a broadcast action. Anyone clicking Skip affects the room for all users — there is no per-user control.
+Initial rotation: [alice, bob, charlie]
+
+Playing: A1 (alice's turn)
+Up Next: [B1 (bob), C1 (charlie)]   ← one slot per user
+
+After A1 ends → alice goes back to end of rotation (she still has A2)
+Rotation: [bob, charlie, alice]
+
+Playing: B1
+Up Next: [C1, A2]
+
+After B1 ends → bob is removed (no more songs)
+Rotation: [charlie, alice]
+
+Playing: C1
+Up Next: [A2]
+
+After C1 ends → charlie removed
+Rotation: [alice]
+
+Playing: A2
+Up Next: []
+```
 
 ---
 
-### 4.5 User Joins Mid-Song (Sync on Late Join)
+### 3.5 Song Auto-Advances
 
-**Trigger:** A user opens the app while a song is already playing.
-
-**Actor:** Any visitor who arrives after playback has started
-
-#### Step-by-step
+**Trigger:** `setTimeout` fires in `RoomService` after the current song's duration.
 
 ```
-[New Browser]                         [NestJS Backend]
-    |                                         |
-    | socket connects                         |
-    | emit("joinRoom") --------------------->|
-    |                                         |
-    |                          elapsed = (Date.now() - state.startedAt) / 1000
-    |                          e.g. "the song has been playing for 73.4 seconds"
-    |                                         |
-    |<--- emit("roomState", { currentSong,    |
-    |       startedAt, queue, elapsed: 73.4 })|
-    |                                         |
-    | audio.src = /audio/{fileId}.mp3         |
-    | audio.currentTime = 73.4               |
-    | audio.play()                            |
-    |                                         |
-    | [User is in sync with the room]         |
+[RoomService — server]                    [All Clients]
+    |                                          |
+    | setTimeout fires                         |
+    | advanceSong()                            |
+    |   → pops next from round-robin           |
+    |   → sets currentSong, startedAt          |
+    |   → emits internal "room.songAdvanced"   |
+    |   → schedules next setTimeout            |
+    |                                          |
+    | RoomGateway.handleSongAdvanced:          |
+    | server.emit("songStarted", state) ------>|
+    |                                          |
+    |              useAudioPlayer.onSongStarted:
+    |              audio.src = /audio/{fileId}.mp3
+    |              audio.currentTime = 0
+    |              audio.play()               |
 ```
 
-**Why this works:** Every client streams the same MP3 file from the server and seeks to an offset derived from the same server clock. There is no peer-to-peer negotiation. The server's `Date.now()` is the single source of truth.
+If the queue is empty, `currentSong` is set to null and audio is paused / src cleared.
 
 ---
 
-### 4.6 User Loses Connection and Reconnects
+### 3.6 Skip Song
 
-**Trigger:** Network drop, tab goes to sleep, or server restart.
-
-**Actor:** Any connected user
-
-#### Step-by-step
+**Trigger:** User clicks "Skip →" in NowPlaying (only visible if they added the current song).
 
 ```
-[Browser]                              [NestJS Backend]
-    |                                         |
-    | socket.on('disconnect')                 |
-    | → setConnected(false)                   |
-    | [UI shows "connecting…" badge]          |
-    |                                         |
-    | socket.io auto-reconnects               |
-    | socket.on('connect')                    |
-    | → setConnected(true)                    |
-    | → emit("joinRoom") ------------------->|
-    |                                         |
-    |<-- emit("roomState", { ..., elapsed }) -|
-    |                                         |
-    | [audio seeks to current elapsed]        |
-    | [user re-syncs to the room]             |
+[NowPlaying]    [useRoomState]        [NestJS]
+    |                |                    |
+    | onSkip() ----->|                    |
+    |                | emit("skipSong",   |
+    |                |  { username }) --->|
+    |                |                    |
+    |                |    if current.addedBy !== username → do nothing (enforced server-side)
+    |                |                    |
+    |                |    RoomService.advanceSong()
+    |                |       (same path as auto-advance)
 ```
 
-**Note:** If the server restarted, all in-memory state is reset. The rejoining client will receive `currentSong: null` and an empty queue. This is intentional — there is no persistence.
+Skip is **restricted to the song's owner**. The gateway checks `current.addedBy !== data.username` and returns early if there's a mismatch. Anyone can see their own song's skip button, but no one can skip someone else's song.
+
+---
+
+### 3.7 Personal Queue Management
+
+**Trigger:** User clicks remove/move buttons in their PersonalQueue panel.
+
+All mutations only affect the user's personal queue. The `username` in the payload is matched server-side — you cannot mutate another user's queue.
+
+**Remove a song:**
+- `socket.emit("removeFromQueue", { songId, username })`
+- Server: removes from `userQueues[username]`, removes user from `userOrder` if queue becomes empty
+- Broadcasts `queueUpdated` to all clients
+
+**Move to top:**
+- `socket.emit("moveToTop", { songId, username })`
+- Server: moves song to front of `userQueues[username]`
+- `rebuildPublicState()` updates the room queue preview
+- Broadcasts `queueUpdated`
+
+**Move to bottom:**
+- Same as move to top but pushes to end.
+
+---
+
+### 3.8 Join Mid-Song (Sync)
+
+**Trigger:** User opens the app while a song is already playing.
+
+```
+[New Browser]                          [NestJS]
+    |                                      |
+    | emit("joinRoom", { username }) ----->|
+    |                                      |
+    |              elapsed = (Date.now() - state.startedAt) / 1000
+    |                                      |
+    |<-- emit("roomState", {               |
+    |      currentSong, startedAt,         |
+    |      queue, userQueues,              |
+    |      elapsed: 73.4 }) --------------|
+    |                                      |
+    | audio.src = /audio/{fileId}.mp3      |
+    | wait for loadedmetadata              |
+    | audio.currentTime = 73.4           |
+    | audio.play()                        |
+    |                                      |
+    | [User is in sync with the room]      |
+```
+
+The server's `Date.now()` is the single clock. Because all clients stream the same MP3 and seek to the same offset, they play in sync with no peer-to-peer coordination.
+
+---
+
+### 3.9 Reconnect
+
+**Trigger:** Network drop, tab sleep, or server restart.
+
+Socket.io reconnects automatically. On reconnect, `useSocket` re-emits `joinRoom` inside the `connect` handler, which triggers a fresh `roomState` response. The audio player picks it up via `onRoomState` and re-syncs the audio position.
+
+If the server restarted, state is **restored from the snapshot** (see §4). The user re-syncs to the recovered state.
+
+---
+
+### 3.10 Stall Recovery
+
+If the `<audio>` element fires `stalled` or `error`:
+- Up to 3 retries: reload the same `audio.src`, seek back to `currentTime`, call `play()`
+- After 3 failures, gives up silently
+
+---
+
+## 4. State Persistence (Snapshot)
+
+The server writes a snapshot of its full state to disk shortly after every change (500ms debounce). On startup, it reads the snapshot back.
+
+**Files (dev):**
+- `apps/api/.dev-state/room-state.json` — queue state, user queues, rotation order
+- `apps/api/.dev-state/meta-cache.json` — fileId → title/duration metadata
+
+**Files (Docker):**
+Controlled by `process.env.STATE_DIR`. In the default Docker setup this is set to `/app/.dev-state` (inside the container). The audio-cache volume is separate and persists MP3 files.
+
+**On startup:**
+1. Read `room-state.json`
+2. Restore `userQueues`, `userOrder`, `currentSong`, `queue`, `startedAt`
+3. If a song was playing:
+   - Calculate remaining time: `duration - (Date.now() - startedAt) / 1000`
+   - If remaining ≤ 0 → call `advanceSong()` immediately (skip stale song)
+   - If remaining > 0 → set timer for that many seconds
+
+**On shutdown:**
+Flush snapshot synchronously before process exits.
 
 ---
 
 ## 5. Audio Delivery
 
-Audio files are served by NestJS via `@nestjs/serve-static`, which mounts `audio-cache/` at the `/audio` route.
-
-```
-audio-cache/abc123def456.mp3
-→ http://localhost:4000/audio/abc123def456.mp3
-```
-
-`@nestjs/serve-static` handles **HTTP Range requests** automatically. This is essential: browsers send `Range: bytes=X-Y` headers when an `<audio>` element seeks. Without range support, `audio.currentTime = elapsed` would not work correctly.
-
-The frontend audio URL is proxied through Next.js via `next.config.js` rewrites, so the browser fetches `/audio/...` on port 3000 which forwards to port 4000. This avoids CORS issues on audio requests.
+`AudioController` (`GET /audio/:fileId.mp3`) handles all audio requests:
+- Reads `apps/api/audio-cache/{fileId}.mp3`
+- Sets `X-Accel-Buffering: no` to prevent Caddy/nginx from buffering the whole file
+- Supports full HTTP 206 range requests (essential for `audio.currentTime` seeking)
+- Returns 404 if the file doesn't exist
 
 ---
 
-## 6. State Ownership Summary
+## 6. State Ownership
 
-| State | Owner | Lives Where |
-|-------|-------|-------------|
-| `currentSong` | `RoomService` | In-memory on server |
-| `startedAt` | `RoomService` | In-memory on server |
-| `queue` | `RoomService` | In-memory on server |
-| `elapsed` | Computed at read time | `RoomService.getRoomState()` |
-| `metaCache` (title/duration) | `QueueService` | In-memory on server |
-| MP3 files | Filesystem | `audio-cache/` on server |
-| `currentSong` (UI) | `useRoom` hook | React state in browser |
-| `queue` (UI) | `useRoom` hook | React state in browser |
-| `downloadStatuses` | `useRoom` hook | React state in browser |
-| `connected` | `useRoom` hook | React state in browser |
-
----
-
-## 7. Data Flow Diagram — Adding a Song (Condensed)
-
-```
-User Input (SearchBox)
-    ↓
-SearchBox transforms input:
-  "lofi hip hop" → "ytsearch1:lofi hip hop"
-  "https://..." → "https://..." (unchanged)
-    ↓
-useRoom.addToQueue(url)
-    ↓
-socket.emit("addToQueue", { url })
-    ↓ [network]
-RoomGateway.handleAddToQueue()
-    ↓
-broadcast downloadStatus { downloading, 0% } → all clients
-    ↓
-QueueService.downloadAndEnqueue()
-    ↓
-yt-dlp child process
-    ↓ (progress events)
-broadcast downloadStatus { downloading, N% } → all clients
-    ↓ (exit 0)
-QueueItem created, MP3 on disk
-    ↓
-broadcast downloadStatus { done, item } → all clients
-    ↓
-RoomService.enqueue(item)
-    ↓
-  [if nothing playing]          [if already playing]
-        ↓                               ↓
-  advanceSong()               item appended to queue
-        ↓                               ↓
-  currentSong = item          broadcast queueUpdated → all clients
-  startedAt = Date.now()
-        ↓
-  emit internal "room.songAdvanced"
-        ↓
-  RoomGateway broadcasts "songStarted" → all clients
-        ↓
-  useRoom.on("songStarted")
-        ↓
-  audio.src = /audio/{fileId}.mp3
-  audio.currentTime = 0
-  audio.play()
-        ↓
-  Browser fetches MP3 (Range request)
-        ↓
-  Music plays in sync across all clients
-```
-
----
-
-## 8. What This System Does Not Do
-
-| Excluded Feature | Reason |
-|------------------|--------|
-| Play / pause / seek controls | Music flows like a radio — no per-user control |
-| Per-user volume or queue management | No auth, no accounts |
-| Persistent queue or history | State resets on server restart — intentional |
-| Multiple rooms | One room only in v1 |
-| Video playback | Audio only |
-| Database | In-memory state is sufficient for this use case |
-| Next.js API routes for state | All stateful logic lives in NestJS only |
+| State | Owner | Where |
+|---|---|---|
+| `currentSong` | `RoomService` | In-memory + snapshot |
+| `startedAt` | `RoomService` | In-memory + snapshot |
+| `queue` (round-robin preview) | `RoomService` | Derived from userQueues |
+| `userQueues` (per-user backlog) | `RoomService` | In-memory + snapshot |
+| `userOrder` (rotation) | `RoomService` | In-memory + snapshot |
+| `metaCache` (title/duration) | `QueueService` | In-memory + JSON file |
+| MP3 files | Filesystem | `audio-cache/` |
+| `username` | Browser | `localStorage` |
+| React state (currentSong, queue, etc.) | `useRoomState` | React state |
+| Socket connection | `lib/socket.ts` | Module singleton |
+| Audio element | `useAudioPlayer` | React ref |
