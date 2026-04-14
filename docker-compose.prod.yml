@@ -6,6 +6,10 @@ services:
     volumes:
       - audio-cache:/app/audio-cache
       - ./cookies.txt:/app/cookies.txt
+    environment:
+      YTDLP_PROXY: socks5://host.docker.internal:40000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     dns:
       - 8.8.8.8
       - 8.8.4.4
