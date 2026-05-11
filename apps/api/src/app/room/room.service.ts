@@ -38,6 +38,8 @@ export class RoomService implements OnModuleInit, OnApplicationShutdown {
   }
 
   onApplicationShutdown(): void {
+    if (this.advanceTimer) { clearTimeout(this.advanceTimer); this.advanceTimer = null }
+    if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null }
     this.flushSnapshot()
   }
 

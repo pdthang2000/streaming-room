@@ -11,11 +11,15 @@ export function useRoom(username: string | null) {
     queue,
     userQueues,
     downloadStatuses,
+    searchResults,
+    searchLoading,
     addToQueue,
     skipSong,
     removeFromQueue,
     moveToTop,
     moveToBottom,
+    search,
+    clearSearchResults,
   } = useRoomState(username)
 
   return {
@@ -23,12 +27,16 @@ export function useRoom(username: string | null) {
     queue,
     userQueues,
     downloadStatuses,
+    searchResults,
+    searchLoading,
     audioRef,
     addToQueue,
     skipSong,
     removeFromQueue,
     moveToTop,
     moveToBottom,
+    search,
+    clearSearchResults,
     connected,
     currentTime,
   }

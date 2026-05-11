@@ -1,9 +1,9 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { Injectable, Logger, OnModuleInit, OnApplicationShutdown } from '@nestjs/common'
 import { spawn } from 'child_process'
 import { createHash } from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
-import { QueueItem } from '@listenroom/shared'
+import { QueueItem, SearchResult } from '@listenroom/shared'
 
 const CACHE_DIR = process.env.AUDIO_CACHE_DIR ?? path.resolve(process.cwd(), 'apps/api/audio-cache')
 const META_CACHE_PATH = process.env.STATE_DIR
@@ -15,9 +15,14 @@ function getFileId(sourceUrl: string): string {
 }
 
 @Injectable()
-export class QueueService implements OnModuleInit {
+export class QueueService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(QueueService.name)
   private metaCache = new Map<string, { title: string; duration: number; originalUrl: string }>()
+  private currentSearchProc: ReturnType<typeof spawn> | null = null
+
+  onApplicationShutdown() {
+    if (this.currentSearchProc) { this.currentSearchProc.kill(); this.currentSearchProc = null }
+  }
 
   onModuleInit() {
     if (!fs.existsSync(CACHE_DIR)) {
@@ -49,7 +54,7 @@ export class QueueService implements OnModuleInit {
   }
 
   scheduleCleanup(fileId: string, isStillNeeded: () => boolean): void {
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       if (isStillNeeded()) return
       const mp3Path = path.join(CACHE_DIR, `${fileId}.mp3`)
       if (fs.existsSync(mp3Path)) {
@@ -63,6 +68,7 @@ export class QueueService implements OnModuleInit {
       this.metaCache.delete(fileId)
       this.saveMetaCache()
     }, 30_000)
+    timer.unref()
   }
 
   async downloadAndEnqueue(
@@ -100,22 +106,102 @@ export class QueueService implements OnModuleInit {
     }
   }
 
+  async searchTracks(query: string, limit: number): Promise<SearchResult[]> {
+    // Kill any in-flight search process before starting a new one
+    if (this.currentSearchProc) {
+      this.currentSearchProc.kill()
+      this.currentSearchProc = null
+    }
+
+    const args = [
+      `ytsearch${limit}:${query}`,
+      '--flat-playlist',
+      '--no-warnings',
+      '--print', '%(id)s|||%(title)s|||%(duration)s|||%(thumbnail)s|||%(uploader)s',
+    ]
+
+    const cookiesPath = '/app/cookies.txt'
+    if (fs.existsSync(cookiesPath)) {
+      args.push('--cookies', cookiesPath)
+    }
+
+    return new Promise((resolve, reject) => {
+      let proc: ReturnType<typeof spawn>
+      try {
+        proc = spawn('yt-dlp', args)
+      } catch (err) {
+        return reject(new Error('yt-dlp is not installed or not found in PATH'))
+      }
+
+      this.currentSearchProc = proc
+
+      let lineBuffer = ''
+      let stderrBuf = ''
+
+      proc.stdout?.on('data', (data: Buffer) => { lineBuffer += data.toString() })
+      proc.stderr?.on('data', (data: Buffer) => { stderrBuf += data.toString() })
+
+      proc.on('error', (err: NodeJS.ErrnoException) => {
+        if (this.currentSearchProc === proc) this.currentSearchProc = null
+        if (err.code === 'ENOENT') {
+          reject(new Error('yt-dlp is not installed or not found in PATH'))
+        } else {
+          reject(err)
+        }
+      })
+
+      proc.on('close', (code, signal) => {
+        if (this.currentSearchProc === proc) this.currentSearchProc = null
+        // Killed by a newer search — resolve silently with empty results
+        if (signal === 'SIGTERM') return resolve([])
+        if (code !== 0) {
+          const reason = stderrBuf.trim().split('\n').pop() || `exit code ${code}`
+          return reject(new Error(`yt-dlp search failed: ${reason}`))
+        }
+
+        const results: SearchResult[] = lineBuffer
+          .split('\n')
+          .filter(l => l.trim())
+          .map(line => {
+            const [id, title, durationStr, thumbnail, uploader] = line.trim().split('|||')
+            if (!id || id === 'NA') return null
+            return {
+              videoId: id,
+              title: title && title !== 'NA' ? title : 'Unknown',
+              duration: parseInt(durationStr, 10) || 0,
+              thumbnail: thumbnail && thumbnail !== 'NA'
+                ? thumbnail
+                : `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+              uploader: uploader && uploader !== 'NA' ? uploader.trim() : 'Unknown',
+              url: `https://www.youtube.com/watch?v=${id}`,
+            } satisfies SearchResult
+          })
+          .filter((r): r is SearchResult => r !== null)
+
+        resolve(results)
+      })
+    })
+  }
+
   private download(
     sourceUrl: string,
     fileId: string,
     onProgress?: (progress: number) => void,
   ): Promise<{ title: string; duration: number }> {
-    // Use a temp filename during download; yt-dlp will rename after conversion
     const outputTemplate = path.join(CACHE_DIR, `${fileId}.%(ext)s`)
     const finalMp3 = path.join(CACHE_DIR, `${fileId}.mp3`)
 
     return new Promise((resolve, reject) => {
+      let settled = false
+      const rejectOnce = (err: Error) => { if (!settled) { settled = true; reject(err) } }
+
       const args = [
         sourceUrl,
         '--extract-audio',
         '--audio-format', 'mp3',
         '--audio-quality', '0',
         '--output', outputTemplate,
+        '--print', 'before_dl:PRECHECK|||%(is_live)s|||%(filesize_approx)s',
         '--print', 'after_move:%(title)s|||%(duration)s',
         '--no-playlist',
       ]
@@ -129,17 +215,34 @@ export class QueueService implements OnModuleInit {
       try {
         proc = spawn('yt-dlp', args)
       } catch (err) {
-        return reject(new Error('yt-dlp is not installed or not found in PATH'))
+        return rejectOnce(new Error('yt-dlp is not installed or not found in PATH'))
       }
 
       let meta = ''
       let stderrBuf = ''
 
       proc.stdout?.on('data', (data: Buffer) => {
-        const line = data.toString()
-        const match = line.match(/(\d+\.?\d*)%/)
-        if (match && onProgress) onProgress(parseFloat(match[1]))
-        if (line.includes('|||')) meta = line.trim()
+        const chunk = data.toString()
+        for (const line of chunk.split('\n')) {
+          if (line.startsWith('PRECHECK|||')) {
+            const [, isLive, fileSizeStr] = line.trim().split('|||')
+            if (isLive === 'True') {
+              proc.kill()
+              rejectOnce(new Error('Livestreams are not supported'))
+              return
+            }
+            const fileSize = parseInt(fileSizeStr, 10)
+            if (!isNaN(fileSize) && fileSize > 20 * 1024 * 1024) {
+              proc.kill()
+              rejectOnce(new Error('Too heavy payload'))
+              return
+            }
+          } else {
+            const match = line.match(/(\d+\.?\d*)%/)
+            if (match && onProgress) onProgress(parseFloat(match[1]))
+            if (line.includes('|||')) meta = line.trim()
+          }
+        }
       })
 
       proc.stderr?.on('data', (data: Buffer) => {
@@ -151,31 +254,28 @@ export class QueueService implements OnModuleInit {
 
       proc.on('error', (err: NodeJS.ErrnoException) => {
         if (err.code === 'ENOENT') {
-          reject(new Error('yt-dlp is not installed or not found in PATH'))
+          rejectOnce(new Error('yt-dlp is not installed or not found in PATH'))
         } else {
-          reject(err)
+          rejectOnce(err)
         }
       })
 
       proc.on('close', (code) => {
         if (code !== 0) {
-          // Clean up any partial/unconverted file left behind
           for (const ext of ['webm', 'm4a', 'opus', 'ogg', 'part']) {
             const leftover = path.join(CACHE_DIR, `${fileId}.${ext}`)
             if (fs.existsSync(leftover)) fs.unlinkSync(leftover)
           }
           const reason = stderrBuf.trim().split('\n').pop() || `exit code ${code}`
-          return reject(new Error(`yt-dlp failed: ${reason}`))
+          return rejectOnce(new Error(`yt-dlp failed: ${reason}`))
         }
 
-        // Guard: if the mp3 wasn't produced, ffmpeg likely wasn't available
         if (!fs.existsSync(finalMp3)) {
-          // Clean up whatever was left
           for (const ext of ['webm', 'm4a', 'opus', 'ogg']) {
             const leftover = path.join(CACHE_DIR, `${fileId}.${ext}`)
             if (fs.existsSync(leftover)) fs.unlinkSync(leftover)
           }
-          return reject(new Error('yt-dlp finished but mp3 was not produced — is ffmpeg installed?'))
+          return rejectOnce(new Error('yt-dlp finished but mp3 was not produced — is ffmpeg installed?'))
         }
 
         const [rawTitle, rawDuration] = meta.split('|||')

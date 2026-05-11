@@ -17,6 +17,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.enableCors({ origin: '*' });
   app.useWebSocketAdapter(new CorsIoAdapter(app));
+  app.enableShutdownHooks();
   await app.listen(4000);
   Logger.log('Application is running on: http://localhost:4000');
 }

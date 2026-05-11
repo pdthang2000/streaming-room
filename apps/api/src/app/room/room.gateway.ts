@@ -16,6 +16,7 @@ import {
   JoinRoomPayload,
   QueueMutationPayload,
   SkipSongPayload,
+  SearchPayload,
 } from '@listenroom/shared'
 import { Logger } from '@nestjs/common'
 
@@ -112,6 +113,22 @@ export class RoomGateway {
   handleMoveBottom(@MessageBody() data: QueueMutationPayload) {
     const ok = this.roomService.moveToBottom(data.username, data.songId)
     if (ok) this.server.emit(EVENTS.QUEUE_UPDATED, this.roomService.getRoomState())
+  }
+
+  @SubscribeMessage(EVENTS.SEARCH)
+  async handleSearch(
+    @MessageBody() data: SearchPayload,
+    @ConnectedSocket() client: Socket,
+  ) {
+    const query = data.query?.trim()
+    if (!query) { client.emit(EVENTS.SEARCH_RESULTS, []); return }
+    try {
+      const results = await this.queueService.searchTracks(query, data.limit ?? 5)
+      client.emit(EVENTS.SEARCH_RESULTS, results)
+    } catch (err) {
+      this.logger.error(`Search failed: ${err instanceof Error ? err.message : err}`)
+      client.emit(EVENTS.SEARCH_RESULTS, [])
+    }
   }
 
   @OnEvent('room.songAdvanced')

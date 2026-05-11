@@ -96,6 +96,27 @@ Before writing any code, read:
 
 ---
 
+## Gotchas
+
+### NestJS shutdown hooks + Nx hot-reload = zombie processes
+
+**Problem:** Without `app.enableShutdownHooks()` in `main.ts`, the Nx `@nx/js:node`
+executor's SIGTERM on hot-reload does not trigger NestJS lifecycle hooks. The HTTP server,
+Socket.io connections, and any active `setTimeout`s (song advance timer, snapshot debounce,
+cleanup timer) keep the Node event loop alive. The old process never exits. Every webpack
+rebuild stacks another orphan — RAM climbs continuously.
+
+**Rules:**
+- `main.ts` MUST call `app.enableShutdownHooks()` so NestJS intercepts SIGTERM and runs
+  `onApplicationShutdown()` hooks, which close the server and clear timers.
+- Any service that creates a `setTimeout` or `setInterval` MUST clear it in its
+  `onApplicationShutdown()` hook.
+- Long-lived or non-critical timers (e.g. the 30s file cleanup in `QueueService`) should
+  call `.unref()` so they cannot keep a dying process alive on their own.
+- Any service that spawns child processes MUST kill them in `onApplicationShutdown()`.
+
+---
+
 ## Version History
 
 | File | Covers |

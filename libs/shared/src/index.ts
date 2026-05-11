@@ -33,6 +33,25 @@ export interface DownloadStatus {
   item?: QueueItem              // present when status is 'done'
 }
 
+// ─── Search Types ─────────────────────────────────────────────────────────────
+
+export interface SearchResult {
+  videoId: string
+  title: string
+  duration: number    // integer seconds; 0 = live/unknown
+  thumbnail: string   // CDN URL
+  uploader: string    // channel name
+  url: string         // full watch URL — pass directly to addToQueue
+}
+
+export interface SearchPayload {
+  query: string
+  platform: 'youtube'   // extend union for future platforms
+  limit?: number
+}
+
+export type SearchResultsPayload = SearchResult[]
+
 // ─── Socket Event Names ───────────────────────────────────────────────────────
 // Use these constants everywhere — never hardcode event name strings
 
@@ -44,12 +63,14 @@ export const EVENTS = {
   REMOVE_FROM_QUEUE: 'removeFromQueue',
   MOVE_TO_TOP: 'moveToTop',
   MOVE_TO_BOTTOM: 'moveToBottom',
+  SEARCH: 'search',
 
   // Server → Client
   ROOM_STATE: 'roomState',           // sent only to the joining client
   SONG_STARTED: 'songStarted',       // broadcast to all when song changes
   QUEUE_UPDATED: 'queueUpdated',     // broadcast to all when queue changes
   DOWNLOAD_STATUS: 'downloadStatus', // broadcast progress/errors
+  SEARCH_RESULTS: 'searchResults',   // sent only to the requesting client
 } as const
 
 // ─── Socket Payload Types ─────────────────────────────────────────────────────

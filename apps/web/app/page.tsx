@@ -33,12 +33,16 @@ export default function RoomPage() {
     queue,
     userQueues,
     downloadStatuses,
+    searchResults,
+    searchLoading,
     audioRef,
     addToQueue,
     skipSong,
     removeFromQueue,
     moveToTop,
     moveToBottom,
+    search,
+    clearSearchResults,
     connected,
     currentTime,
   } = useRoom(username)
@@ -80,7 +84,14 @@ export default function RoomPage() {
             <NowPlaying currentSong={currentSong} onSkip={skipSong} currentTime={currentTime} username={username} />
 
             {/* Add / Search */}
-            <SearchBox downloadStatuses={downloadStatuses} onAdd={addToQueue} />
+            <SearchBox
+              downloadStatuses={downloadStatuses}
+              onAdd={addToQueue}
+              searchResults={searchResults}
+              searchLoading={searchLoading}
+              onSearch={search}
+              onClearSearch={clearSearchResults}
+            />
 
             {/* Bottom row: My queue + People's queue */}
             <div className="flex gap-4 flex-1 min-h-0">

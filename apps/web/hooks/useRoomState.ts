@@ -1,13 +1,15 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { getSocket } from '../lib/socket'
-import { EVENTS, type QueueItem, type DownloadStatus, type RoomState, type RoomStatePayload } from '@listenroom/shared'
+import { EVENTS, type QueueItem, type DownloadStatus, type RoomState, type RoomStatePayload, type SearchResult, type SearchPayload } from '@listenroom/shared'
 
 export function useRoomState(username: string | null) {
   const [currentSong, setCurrentSong] = useState<QueueItem | null>(null)
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [userQueues, setUserQueues] = useState<Record<string, QueueItem[]>>({})
   const [downloadStatuses, setDownloadStatuses] = useState<DownloadStatus[]>([])
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([])
+  const [searchLoading, setSearchLoading] = useState(false)
 
   useEffect(() => {
     const socket = getSocket()
@@ -36,16 +38,23 @@ export function useRoomState(username: string | null) {
       }
     }
 
+    const onSearchResults = (results: SearchResult[]) => {
+      setSearchResults(results)
+      setSearchLoading(false)
+    }
+
     socket.on(EVENTS.ROOM_STATE, onRoomState)
     socket.on(EVENTS.SONG_STARTED, onSongStarted)
     socket.on(EVENTS.QUEUE_UPDATED, onQueueUpdated)
     socket.on(EVENTS.DOWNLOAD_STATUS, onDownloadStatus)
+    socket.on(EVENTS.SEARCH_RESULTS, onSearchResults)
 
     return () => {
       socket.off(EVENTS.ROOM_STATE, onRoomState)
       socket.off(EVENTS.SONG_STARTED, onSongStarted)
       socket.off(EVENTS.QUEUE_UPDATED, onQueueUpdated)
       socket.off(EVENTS.DOWNLOAD_STATUS, onDownloadStatus)
+      socket.off(EVENTS.SEARCH_RESULTS, onSearchResults)
     }
   }, [])
 
@@ -60,15 +69,30 @@ export function useRoomState(username: string | null) {
   const moveToBottom = (songId: string) =>
     getSocket().emit(EVENTS.MOVE_TO_BOTTOM, { songId, username: username ?? 'anonymous' })
 
+  const search = (query: string, platform: SearchPayload['platform']) => {
+    setSearchLoading(true)
+    setSearchResults([])
+    getSocket().emit(EVENTS.SEARCH, { query, platform, limit: 5 })
+  }
+
+  const clearSearchResults = () => {
+    setSearchResults([])
+    setSearchLoading(false)
+  }
+
   return {
     currentSong,
     queue,
     userQueues,
     downloadStatuses,
+    searchResults,
+    searchLoading,
     addToQueue,
     skipSong,
     removeFromQueue,
     moveToTop,
     moveToBottom,
+    search,
+    clearSearchResults,
   }
 }

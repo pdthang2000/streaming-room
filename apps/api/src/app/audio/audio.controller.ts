@@ -41,12 +41,16 @@ export class AudioController {
       res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`)
       res.setHeader('Content-Length', chunkSize)
 
-      fs.createReadStream(filePath, { start, end }).pipe(res)
+      const stream = fs.createReadStream(filePath, { start, end })
+      res.on('close', () => stream.destroy())
+      stream.pipe(res)
     } else {
       res.setHeader('Content-Length', fileSize)
       res.status(200)
 
-      fs.createReadStream(filePath).pipe(res)
+      const stream = fs.createReadStream(filePath)
+      res.on('close', () => stream.destroy())
+      stream.pipe(res)
     }
   }
 }
