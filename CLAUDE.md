@@ -72,6 +72,8 @@ Before writing any code, read:
 - ALWAYS scope queue mutations (remove, reorder, skip) to the requesting user — never let one user affect another's queue
 - Next.js is FRONTEND ONLY — it calls the NestJS backend, nothing else
 - The socket client is a SINGLETON (`lib/socket.ts`) — never create multiple socket instances
+- NEVER remove `app.enableShutdownHooks()` from `main.ts` — without it, Nx hot-reloads leak zombie Node processes (see Gotchas)
+- Any service with `setTimeout`/`setInterval` MUST clear them in `onApplicationShutdown()` and `.unref()` non-critical timers
 
 ---
 
@@ -82,7 +84,7 @@ Before writing any code, read:
 | `libs/shared/src/index.ts` | Shared | Touch only to add new types or events |
 | `apps/api/src/app/room/room.service.ts` | Backend | Round-robin queue, state, snapshots |
 | `apps/api/src/app/room/room.gateway.ts` | Backend | Socket.io event handlers |
-| `apps/api/src/app/queue/queue.service.ts` | Backend | yt-dlp download, meta cache, file cleanup |
+| `apps/api/src/app/queue/queue.service.ts` | Backend | yt-dlp download + search, meta cache, file cleanup |
 | `apps/api/src/app/audio/audio.controller.ts` | Backend | HTTP range request handler |
 | `apps/api/audio-cache/` | Runtime | Never commit `.mp3` files |
 | `apps/api/.dev-state/` | Runtime | Never commit snapshot files |
@@ -92,7 +94,7 @@ Before writing any code, read:
 | `apps/web/hooks/useRoomState.ts` | Frontend | Room state + queue actions |
 | `apps/web/hooks/useAudioPlayer.ts` | Frontend | Audio sync, stall recovery, autoplay |
 | `apps/web/app/page.tsx` | Frontend | Single page, layout, username from localStorage |
-| `apps/web/components/` | Frontend | NowPlaying, Queue, PersonalQueue, SearchBox, UsernameModal |
+| `apps/web/components/` | Frontend | NowPlaying, Queue, PersonalQueue, SearchBox (tabbed search + add by link), UsernameModal |
 
 ---
 
